@@ -6,7 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,7 +33,7 @@ type StopFn func()
 
 // service represents a HTTP service.
 type service struct {
-	Target *url.URL               // Target service URL
+	Target *Target                // Target service URL
 	Alive  bool                   // Health status
 	Proxy  *httputil.ReverseProxy // Proxy to forward requests
 	Lock   *sync.RWMutex          // Internal lock for multiple readers
@@ -59,7 +59,7 @@ func (svc *service) SetAlive(alive bool) {
 // on behalf of clients to the backend services.
 type ServicePool interface {
 	// AddService adds a new service to the pool for the given target URL.
-	AddService(target *url.URL)
+	AddService(target *Target) error
 
 	// GC starts the IP registry garbage collector and returns a stop
 	// function to exit garbage collection loop; effectively stopping the
@@ -95,12 +95,16 @@ func New(rate int64, rateCap int64) ServicePool {
 	}
 }
 
-func (pool *servicePool) AddService(target *url.URL) {
+func (pool *servicePool) AddService(target *Target) error {
+	targetUrl, err := target.URL()
+	if err != nil {
+		return err
+	}
 	svc := &service{
 		Target: target,
 		Alive:  true,
 		Lock:   new(sync.RWMutex),
-		Proxy:  httputil.NewSingleHostReverseProxy(target),
+		Proxy:  httputil.NewSingleHostReverseProxy(targetUrl),
 	}
 	svc.Proxy.ErrorHandler =
 		func(w http.ResponseWriter, r *http.Request, err error) {
@@ -114,6 +118,7 @@ func (pool *servicePool) AddService(target *url.URL) {
 			}
 		}
 	pool.Services = append(pool.Services, svc)
+	return nil
 }
 
 func (pool *servicePool) CurrentService() *service {
@@ -136,8 +141,8 @@ func (pool *servicePool) HealthCheck(interval time.Duration) StopFn {
 				return
 			case <-t.C:
 				for _, svc := range pool.Services {
-					alive := isServiceAvailable(svc.Target,
-						"tcp", time.Second*3)
+					alive := isServiceAvailable(
+						svc.Target, time.Second*3)
 					svc.SetAlive(alive)
 				}
 			}
@@ -297,13 +302,23 @@ func getRetriesFromContext(r *http.Request) int {
 
 // isServiceAvailable returns true if the given targeted URL is available for
 // the given protocol.
-func isServiceAvailable(target *url.URL, proto string, to time.Duration) bool {
-	conn, err := net.DialTimeout(proto, target.Host, to)
-	if err != nil {
-		return false
+func isServiceAvailable(target *Target, to time.Duration) bool {
+	available := false
+	port := target.Port
+	if port == 0 {
+		port = GetPort(target.Protocol)
 	}
-	conn.Close()
-	return true
+	hostPort := net.JoinHostPort(target.Target, strconv.Itoa(port))
+	networks := GetTransport(target.Protocol)
+	for _, network := range networks {
+		conn, err := net.DialTimeout(network, hostPort, to)
+		if err == nil {
+			conn.Close()
+			available = true
+			break
+		}
+	}
+	return available
 }
 
 // prExTim logs the execution time for a given routine name.

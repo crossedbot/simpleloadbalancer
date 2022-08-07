@@ -35,8 +35,9 @@ func TestAttemptNextService(t *testing.T) {
 	)
 	defer ts.Close()
 
-	target, err := url.Parse(ts.URL)
+	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
+	target := NewTarget("", targetUrl)
 	pool := &servicePool{
 		RateCapacity: capacity,
 		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
@@ -141,21 +142,22 @@ func TestIsServiceAvailable(t *testing.T) {
 	)
 	defer ts.Close()
 
-	target, err := url.Parse(ts.URL)
+	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
-
-	status := isServiceAvailable(target, "tcp", 1*time.Second)
+	target := NewTarget("", targetUrl)
+	status := isServiceAvailable(target, 1*time.Second)
 	require.True(t, status)
 
 	ts.Close()
-	status = isServiceAvailable(target, "tcp", 1*time.Second)
+	status = isServiceAvailable(target, 1*time.Second)
 	require.False(t, status)
 }
 
 func TestAddService(t *testing.T) {
 	pool := &servicePool{}
-	target, err := url.Parse("localhost:8080/hello")
+	targetUrl, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
+	target := NewTarget("", targetUrl)
 	pool.AddService(target)
 	require.Equal(t, 1, len(pool.Services))
 	svc := pool.Services[0]
@@ -165,8 +167,9 @@ func TestAddService(t *testing.T) {
 
 func TestCurrentService(t *testing.T) {
 	pool := &servicePool{}
-	target, err := url.Parse("localhost:8080/hello")
+	targetUrl, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
+	target := NewTarget("", targetUrl)
 	pool.AddService(target)
 	svc := pool.CurrentService()
 	require.NotNil(t, svc)
@@ -184,8 +187,9 @@ func TestHealthCheck(t *testing.T) {
 	defer ts.Close()
 
 	pool := &servicePool{}
-	target, err := url.Parse(ts.URL)
+	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
+	target := NewTarget("", targetUrl)
 	pool.AddService(target)
 	svc := pool.CurrentService()
 	require.NotNil(t, svc)
@@ -218,8 +222,9 @@ func TestLoadBalancer(t *testing.T) {
 	)
 	defer ts.Close()
 
-	target, err := url.Parse(ts.URL)
+	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
+	target := NewTarget("", targetUrl)
 	pool := &servicePool{
 		RateCapacity: capacity,
 		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
@@ -248,10 +253,12 @@ func TestLoadBalancer(t *testing.T) {
 
 func TestNextIndex(t *testing.T) {
 	pool := &servicePool{}
-	target1, err := url.Parse("localhost:8080/hello")
+	targetUrl1, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
-	target2, err := url.Parse("localhost:8080/world")
+	target1 := NewTarget("", targetUrl1)
+	targetUrl2, err := url.Parse("localhost:8081")
 	require.Nil(t, err)
+	target2 := NewTarget("", targetUrl2)
 	pool.AddService(target1)
 	pool.AddService(target2)
 	expected := 1
@@ -261,10 +268,12 @@ func TestNextIndex(t *testing.T) {
 
 func TestNextService(t *testing.T) {
 	pool := &servicePool{}
-	target1, err := url.Parse("localhost:8080/hello")
+	targetUrl1, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
-	target2, err := url.Parse("localhost:8080/world")
+	target1 := NewTarget("", targetUrl1)
+	targetUrl2, err := url.Parse("localhost:8081")
 	require.Nil(t, err)
+	target2 := NewTarget("", targetUrl2)
 	pool.AddService(target1)
 	pool.AddService(target2)
 	svc := pool.NextService()
@@ -290,8 +299,9 @@ func TestRetryTargetService(t *testing.T) {
 	)
 	defer ts.Close()
 
-	target, err := url.Parse(ts.URL)
+	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
+	target := NewTarget("", targetUrl)
 	pool := &servicePool{
 		RateCapacity: capacity,
 		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),

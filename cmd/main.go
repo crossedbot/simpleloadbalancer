@@ -40,7 +40,7 @@ func newServicePool(c Config) services.ServicePool {
 	for _, target := range c.Targets {
 		v, err := url.Parse(target)
 		if err == nil {
-			pool.AddService(v)
+			pool.AddService(services.NewTarget("", v))
 		}
 	}
 	return pool
