@@ -6,15 +6,15 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"strconv"
+	"net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/crossedbot/common/golang/logger"
 
 	"github.com/crossedbot/simpleloadbalancer/pkg/ratelimit"
+	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
 )
 
 const (
@@ -33,33 +33,15 @@ type StopFn func()
 
 // service represents a HTTP service.
 type service struct {
-	Target *Target                // Target service URL
-	Alive  bool                   // Health status
+	Target targets.Target         // Target service URL
 	Proxy  *httputil.ReverseProxy // Proxy to forward requests
-	Lock   *sync.RWMutex          // Internal lock for multiple readers
-}
-
-// IsAlive returns true if the service is alive.
-func (svc *service) IsAlive() bool {
-	var alive bool
-	svc.Lock.RLock()
-	alive = svc.Alive
-	svc.Lock.RUnlock()
-	return alive
-}
-
-// SetAlive sets the service status to alive.
-func (svc *service) SetAlive(alive bool) {
-	svc.Lock.Lock()
-	svc.Alive = alive
-	svc.Lock.Unlock()
 }
 
 // ServicePool represents a pool of services for tracking and balancing requests
 // on behalf of clients to the backend services.
 type ServicePool interface {
 	// AddService adds a new service to the pool for the given target URL.
-	AddService(target *Target) error
+	AddService(target targets.Target) error
 
 	// GC starts the IP registry garbage collector and returns a stop
 	// function to exit garbage collection loop; effectively stopping the
@@ -95,15 +77,19 @@ func New(rate int64, rateCap int64) ServicePool {
 	}
 }
 
-func (pool *servicePool) AddService(target *Target) error {
-	targetUrl, err := target.URL()
+func (pool *servicePool) AddService(target targets.Target) error {
+	proto := target.Get("protocol")
+	host := target.Get("host")
+	if port := target.Get("port"); port != "" {
+		host = net.JoinHostPort(host, port)
+	}
+	urlStr := fmt.Sprintf("%s://%s", proto, host)
+	targetUrl, err := url.Parse(urlStr)
 	if err != nil {
 		return err
 	}
 	svc := &service{
 		Target: target,
-		Alive:  true,
-		Lock:   new(sync.RWMutex),
 		Proxy:  httputil.NewSingleHostReverseProxy(targetUrl),
 	}
 	svc.Proxy.ErrorHandler =
@@ -111,7 +97,7 @@ func (pool *servicePool) AddService(target *Target) error {
 			// Handle service failures by retrying the service, if
 			// that fails attempt another service.
 			alive := pool.retryTargetService(w, r)
-			svc.SetAlive(alive)
+			svc.Target.SetAlive(alive)
 			if !alive && !pool.attemptNextService(w, r) {
 				http.Error(w, "Service not available",
 					http.StatusServiceUnavailable)
@@ -143,7 +129,7 @@ func (pool *servicePool) HealthCheck(interval time.Duration) StopFn {
 				for _, svc := range pool.Services {
 					alive := isServiceAvailable(
 						svc.Target, time.Second*3)
-					svc.SetAlive(alive)
+					svc.Target.SetAlive(alive)
 				}
 			}
 		}
@@ -192,7 +178,7 @@ func (pool *servicePool) NextService() *service {
 	cycle := len(pool.Services) + next
 	for i := next; i < cycle; i++ {
 		idx := i % len(pool.Services)
-		if pool.Services[idx].IsAlive() {
+		if pool.Services[idx].Target.IsAlive() {
 			if i != next {
 				atomic.StoreUint64(&pool.Index, uint64(idx))
 			}
@@ -302,14 +288,10 @@ func getRetriesFromContext(r *http.Request) int {
 
 // isServiceAvailable returns true if the given targeted URL is available for
 // the given protocol.
-func isServiceAvailable(target *Target, to time.Duration) bool {
+func isServiceAvailable(target targets.Target, to time.Duration) bool {
 	available := false
-	port := target.Port
-	if port == 0 {
-		port = GetPort(target.Protocol)
-	}
-	hostPort := net.JoinHostPort(target.Target, strconv.Itoa(port))
-	networks := GetTransport(target.Protocol)
+	hostPort := net.JoinHostPort(target.Get("host"), target.Get("port"))
+	networks := targets.GetTransport(target.Get("protocol"))
 	for _, network := range networks {
 		conn, err := net.DialTimeout(network, hostPort, to)
 		if err == nil {

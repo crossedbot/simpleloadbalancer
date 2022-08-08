@@ -14,6 +14,7 @@ import (
 	"github.com/crossedbot/common/golang/logger"
 
 	"github.com/crossedbot/simpleloadbalancer/pkg/services"
+	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
 )
 
 const (
@@ -40,7 +41,7 @@ func newServicePool(c Config) services.ServicePool {
 	for _, target := range c.Targets {
 		v, err := url.Parse(target)
 		if err == nil {
-			pool.AddService(services.NewTarget("", v))
+			pool.AddService(targets.NewServiceTarget("", v))
 		}
 	}
 	return pool
