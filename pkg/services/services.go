@@ -127,8 +127,8 @@ func (pool *servicePool) HealthCheck(interval time.Duration) StopFn {
 				return
 			case <-t.C:
 				for _, svc := range pool.Services {
-					alive := isServiceAvailable(
-						svc.Target, time.Second*3)
+					alive := svc.Target.IsAvailable(
+						time.Second * 3)
 					svc.Target.SetAlive(alive)
 				}
 			}
@@ -230,12 +230,13 @@ func (pool *servicePool) retryTargetService(w http.ResponseWriter, r *http.Reque
 		select {
 		case <-after:
 			svc := pool.CurrentService()
-			if svc != nil {
-				ctx := context.WithValue(r.Context(),
-					ServiceContextRetryKey, retries+1)
-				svc.Proxy.ServeHTTP(w, r.WithContext(ctx))
-				return true
+			if svc == nil {
+				return false
 			}
+			ctx := context.WithValue(r.Context(),
+				ServiceContextRetryKey, retries+1)
+			svc.Proxy.ServeHTTP(w, r.WithContext(ctx))
+			return true
 		}
 	}
 	return false
@@ -284,23 +285,6 @@ func getRetriesFromContext(r *http.Request) int {
 		return retries
 	}
 	return 0
-}
-
-// isServiceAvailable returns true if the given targeted URL is available for
-// the given protocol.
-func isServiceAvailable(target targets.Target, to time.Duration) bool {
-	available := false
-	hostPort := net.JoinHostPort(target.Get("host"), target.Get("port"))
-	networks := targets.GetTransport(target.Get("protocol"))
-	for _, network := range networks {
-		conn, err := net.DialTimeout(network, hostPort, to)
-		if err == nil {
-			conn.Close()
-			available = true
-			break
-		}
-	}
-	return available
 }
 
 // prExTim logs the execution time for a given routine name.

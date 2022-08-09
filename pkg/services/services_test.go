@@ -132,27 +132,6 @@ func TestGetRetriesFromContext(t *testing.T) {
 	require.Equal(t, expected, actual)
 }
 
-func TestIsServiceAvailable(t *testing.T) {
-	ts := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, "%s", "{\"hello\": \"world\"}")
-		}),
-	)
-	defer ts.Close()
-
-	targetUrl, err := url.Parse(ts.URL)
-	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
-	status := isServiceAvailable(target, 1*time.Second)
-	require.True(t, status)
-
-	ts.Close()
-	status = isServiceAvailable(target, 1*time.Second)
-	require.False(t, status)
-}
-
 func TestAddService(t *testing.T) {
 	pool := &servicePool{}
 	targetUrl, err := url.Parse("localhost:8080")

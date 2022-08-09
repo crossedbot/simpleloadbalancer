@@ -2,9 +2,12 @@ package targets
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -48,7 +51,7 @@ func TestTargetGet(t *testing.T) {
 	require.Equal(t, TargetTypeDomain.String(), target.Get("type"))
 }
 
-func TestIsAlive(t *testing.T) {
+func TestTargetIsAlive(t *testing.T) {
 	target := &target{
 		Alive: true,
 		Lock:  new(sync.RWMutex),
@@ -58,7 +61,28 @@ func TestIsAlive(t *testing.T) {
 	require.False(t, target.IsAlive())
 }
 
-func TestSetAlive(t *testing.T) {
+func TestTargetIsAvailable(t *testing.T) {
+	ts := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "%s", "{\"hello\": \"world\"}")
+		}),
+	)
+	defer ts.Close()
+
+	targetUrl, err := url.Parse(ts.URL)
+	require.Nil(t, err)
+	target := NewServiceTarget("", targetUrl)
+	status := target.IsAvailable(1 * time.Second)
+	require.True(t, status)
+
+	ts.Close()
+	status = target.IsAvailable(1 * time.Second)
+	require.False(t, status)
+}
+
+func TestTargetSetAlive(t *testing.T) {
 	target := &target{
 		Alive: true,
 		Lock:  new(sync.RWMutex),

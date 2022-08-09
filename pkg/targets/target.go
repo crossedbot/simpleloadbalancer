@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -24,6 +25,8 @@ var (
 		"ldaps":  636,
 	}
 	ProtocolTransports = map[string][]string{
+		"tcp":    []string{"tcp"},
+		"udp":    []string{"udp"},
 		"http":   []string{"tcp"},
 		"telnet": []string{"tcp"},
 		"smtp":   []string{"tcp"},
@@ -97,6 +100,10 @@ type Target interface {
 	// IsAlive returns true if the target is set alive.
 	IsAlive() bool
 
+	// IsAvailable tries to dial the target with the given timeout and
+	// returns true if the connection succeeded.
+	IsAvailable(to time.Duration) bool
+
 	// SetAlive sets the alive attribute of the target.
 	SetAlive(v bool)
 
@@ -110,7 +117,7 @@ type target struct {
 	Name       string
 	Port       int
 	Protocol   string
-	Target     string
+	Host       string
 	TargetType TargetType
 	Alive      bool
 	Lock       *sync.RWMutex
@@ -126,7 +133,7 @@ func NewTarget(name string, host string, port int, protocol string) Target {
 		Name:       name,
 		Port:       port,
 		Protocol:   protocol,
-		Target:     host,
+		Host:       host,
 		TargetType: targetType,
 		Alive:      true,
 		Lock:       new(sync.RWMutex),
@@ -153,7 +160,7 @@ func (t *target) Get(key string) string {
 	case "alive":
 		v = fmt.Sprintf("%t", t.Alive)
 	case "host":
-		v = t.Target
+		v = t.Host
 	case "name":
 		v = t.Name
 	case "port":
@@ -192,4 +199,19 @@ func (t *target) Summary() string {
 		}
 	}
 	return summary
+}
+
+func (t *target) IsAvailable(to time.Duration) bool {
+	available := false
+	hostPort := net.JoinHostPort(t.Host, strconv.Itoa(t.Port))
+	networks := GetTransport(t.Protocol)
+	for _, network := range networks {
+		conn, err := net.DialTimeout(network, hostPort, to)
+		if err == nil {
+			conn.Close()
+			available = true
+			break
+		}
+	}
+	return available
 }
