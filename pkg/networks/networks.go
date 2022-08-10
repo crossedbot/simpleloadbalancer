@@ -77,13 +77,13 @@ func (pool *networkPool) AddTarget(target targets.Target, to time.Duration) erro
 		func(ctx context.Context, conn net.Conn, err error) {
 			logger.Error(fmt.Sprintf("%s (%s)",
 				err, conn.RemoteAddr().String()))
-			ctx, cancelCtx := context.WithCancel(ctx)
-			alive := pool.retryTarget(ctx, conn)
+			alive := pool.RetryTarget(ctx, conn)
 			target.SetAlive(alive)
-			if !alive && !pool.attemptNextTarget(ctx, conn) {
+			if !alive && !pool.AttemptNextTarget(ctx, conn) {
 				logger.Error(fmt.Sprintf("%s (%s)",
 					ErrExhaustedTargets.Error(),
 					conn.RemoteAddr().String()))
+				_, cancelCtx := context.WithCancel(ctx)
 				cancelCtx()
 				conn.Close()
 			}
@@ -98,9 +98,29 @@ func (pool *networkPool) AddTarget(target targets.Target, to time.Duration) erro
 	return nil
 }
 
+func (pool *networkPool) AttemptNextTarget(ctx context.Context, conn net.Conn) bool {
+	attempts := getAttemptsFromContext(ctx)
+	if attempts < TargetMaxAttempts {
+		target := pool.NextTarget()
+		if target == nil {
+			return false
+		}
+		ctx = context.WithValue(ctx, TargetContextAttemptKey,
+			attempts+1)
+		target.NetworkProxy.Proxy(ctx, conn)
+		return true
+	}
+	return false
+}
+
 func (pool *networkPool) CurrentTarget() *networkTarget {
 	idx := int(pool.Index) % len(pool.Targets)
 	return pool.Targets[idx]
+}
+
+func (pool *networkPool) HandleConnection(conn net.Conn) {
+	ctx := context.Background()
+	pool.AttemptNextTarget(ctx, conn)
 }
 
 func (pool *networkPool) HealthCheck(interval time.Duration) StopFn {
@@ -141,7 +161,7 @@ func (pool *networkPool) LoadBalancer(laddr, network string) (StopFn, error) {
 					logger.Error(err)
 					continue
 				}
-				go pool.handleConnection(conn)
+				go pool.HandleConnection(conn)
 			}
 		}
 	}()
@@ -168,27 +188,7 @@ func (pool *networkPool) NextTarget() *networkTarget {
 	return nil
 }
 
-func (pool *networkPool) attemptNextTarget(ctx context.Context, conn net.Conn) bool {
-	attempts := getAttemptsFromContext(ctx)
-	if attempts < TargetMaxAttempts {
-		target := pool.NextTarget()
-		if target == nil {
-			return false
-		}
-		ctx = context.WithValue(ctx, TargetContextAttemptKey,
-			attempts+1)
-		target.NetworkProxy.Proxy(ctx, conn)
-		return true
-	}
-	return false
-}
-
-func (pool *networkPool) handleConnection(conn net.Conn) {
-	ctx := context.TODO()
-	pool.attemptNextTarget(ctx, conn)
-}
-
-func (pool *networkPool) retryTarget(ctx context.Context, conn net.Conn) bool {
+func (pool *networkPool) RetryTarget(ctx context.Context, conn net.Conn) bool {
 	retries := getRetriesFromContext(ctx)
 	after := time.After(TargetRetryInterval)
 	for retries < TargetMaxRetries {
@@ -230,6 +230,14 @@ func getTargetProtocol(target targets.Target) string {
 		if strings.EqualFold(targetProto, v) {
 			proto = targetProto
 			break
+		}
+	}
+	if proto == "" {
+		// Try to get the transport from the list if we couldn't match
+		// one
+		protos := targets.GetTransport(targetProto)
+		if protos != nil && len(protos) > 0 {
+			return protos[0]
 		}
 	}
 	return proto

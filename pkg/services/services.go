@@ -96,15 +96,33 @@ func (pool *servicePool) AddService(target targets.Target) error {
 		func(w http.ResponseWriter, r *http.Request, err error) {
 			// Handle service failures by retrying the service, if
 			// that fails attempt another service.
-			alive := pool.retryTargetService(w, r)
+			alive := pool.RetryService(w, r)
 			svc.Target.SetAlive(alive)
-			if !alive && !pool.attemptNextService(w, r) {
+			if !alive && !pool.AttemptNextService(w, r) {
 				http.Error(w, "Service not available",
 					http.StatusServiceUnavailable)
 			}
 		}
 	pool.Services = append(pool.Services, svc)
 	return nil
+}
+
+// AttemptNextService attempts the next service at pool.Index + 1 and tracks the
+// attempts in the request's context. If the attempts exceed the maximum number
+// of service attempts, the request is canceled. Returns true if attempt is
+// made, otherwise false returns indicating the request was canceled.
+func (pool *servicePool) AttemptNextService(w http.ResponseWriter, r *http.Request) bool {
+	attempts := getAttemptsFromContext(r)
+	if attempts < ServiceMaxAttempts {
+		svc := pool.NextService()
+		if svc != nil {
+			ctx := context.WithValue(r.Context(),
+				ServiceContextAttemptKey, attempts+1)
+			svc.Proxy.ServeHTTP(w, r.WithContext(ctx))
+			return true
+		}
+	}
+	return false
 }
 
 func (pool *servicePool) CurrentService() *service {
@@ -114,6 +132,18 @@ func (pool *servicePool) CurrentService() *service {
 
 func (pool *servicePool) GC() StopFn {
 	return StopFn(pool.IPRegistry.GC())
+}
+
+// GetOrCreateLimiter returns the rate limiter for a given IP address. If a rate
+// limiter does not exist yet for the IP address, a new one is created and
+// returned.
+func (pool *servicePool) GetOrCreateLimiter(ip net.IP) ratelimit.LeakyBucketLimiter {
+	limiter := pool.IPRegistry.Get(ip)
+	if limiter == nil {
+		limiter = ratelimit.NewLeakyBucket(pool.RateCapacity, pool.Rate)
+		pool.IPRegistry.Set(ip, limiter)
+	}
+	return limiter
 }
 
 func (pool *servicePool) HealthCheck(interval time.Duration) StopFn {
@@ -149,7 +179,7 @@ func (pool *servicePool) LoadBalancer() http.HandlerFunc {
 		}
 		// Retrieve or create the rate limiter for the extracted IP and
 		// check if it has reached its request capacity.
-		limiter := pool.getOrCreateLimiter(ip)
+		limiter := pool.GetOrCreateLimiter(ip)
 		next, err := limiter.Next()
 		if err == ratelimit.ErrLimiterMaxCapacity {
 			msg := fmt.Sprintf(
@@ -160,7 +190,7 @@ func (pool *servicePool) LoadBalancer() http.HandlerFunc {
 			return
 		}
 		// Service the request
-		if !pool.attemptNextService(w, r) {
+		if !pool.AttemptNextService(w, r) {
 			http.Error(w, "Service not available",
 				http.StatusServiceUnavailable)
 			return
@@ -188,42 +218,12 @@ func (pool *servicePool) NextService() *service {
 	return nil
 }
 
-// attemptNextService attempts the next service at pool.Index + 1 and tracks the
-// attempts in the request's context. If the attempts exceed the maximum number
-// of service attempts, the request is canceled. Returns true if attempt is
-// made, otherwise false returns indicating the request was canceled.
-func (pool *servicePool) attemptNextService(w http.ResponseWriter, r *http.Request) bool {
-	attempts := getAttemptsFromContext(r)
-	if attempts < ServiceMaxAttempts {
-		svc := pool.NextService()
-		if svc != nil {
-			ctx := context.WithValue(r.Context(),
-				ServiceContextAttemptKey, attempts+1)
-			svc.Proxy.ServeHTTP(w, r.WithContext(ctx))
-			return true
-		}
-	}
-	return false
-}
-
-// getOrCreateLimiter returns the rate limiter for a given IP address. If a rate
-// limiter does not exist yet for the IP address, a new one is created and
-// returned.
-func (pool *servicePool) getOrCreateLimiter(ip net.IP) ratelimit.LeakyBucketLimiter {
-	limiter := pool.IPRegistry.Get(ip)
-	if limiter == nil {
-		limiter = ratelimit.NewLeakyBucket(pool.RateCapacity, pool.Rate)
-		pool.IPRegistry.Set(ip, limiter)
-	}
-	return limiter
-}
-
-// retryTargetService retries the current service at a set interval and tracks
-// the number of retries attempted in the request's context. If the number
-// retries exceed the maxmimum number of retries, the request is canceled for
-// the current service backend. Returns true if a retry was attempted, otherwise
+// RetryService retries the current service at a set interval and tracks the
+// number of retries attempted in the request's context. If the number retries
+// exceed the maxmimum number of retries, the request is canceled for the
+// current service backend. Returns true if a retry was attempted, otherwise
 // false is returned to indicate the request was canceled.
-func (pool *servicePool) retryTargetService(w http.ResponseWriter, r *http.Request) bool {
+func (pool *servicePool) RetryService(w http.ResponseWriter, r *http.Request) bool {
 	retries := getRetriesFromContext(r)
 	after := time.After(ServiceRetryInterval)
 	for retries < ServiceMaxRetries {

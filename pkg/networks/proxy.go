@@ -56,6 +56,8 @@ func (p *reverseNetworkProxy) Proxy(ctx context.Context, conn net.Conn) {
 			return
 		}
 		defer remoteConn.Close()
+		_, cancelCtx := context.WithCancel(ctx)
+		defer cancelCtx()
 		defer conn.Close()
 		wait := make(chan struct{}, 2)
 		go copyConn(wait, conn, remoteConn, p.Debug)
