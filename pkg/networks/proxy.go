@@ -11,14 +11,27 @@ import (
 	"github.com/crossedbot/common/golang/logger"
 )
 
+// ErrorHandlerFunc is a prototype for network proxy error handler.
 type ErrorHandlerFunc func(context.Context, net.Conn, error)
 
+// ReverseNetworkProxy represents an interface to a network-level reverse proxy
+// to forward TCP, UDP, etc. connections.
 type ReverseNetworkProxy interface {
+	// Proxy forwards the given connection to the targeted service.
 	Proxy(ctx context.Context, conn net.Conn)
+
+	// SetDebug sets the debugging attribute to print things like the
+	// forwarded/reversed packets during the lifetime of the connection.
 	SetDebug(v bool)
+
+	// SetErrorHandler sets the proxy's error handler. For example, when
+	// connecting to the target service fails, an error handler may be
+	// useful for retrying the connection.
 	SetErrorHandler(fn ErrorHandlerFunc)
 }
 
+// reverseNetworkProxy implements the ReverseNetworkProxy and manages target and
+// connection related attributes.
 type reverseNetworkProxy struct {
 	HandleError ErrorHandlerFunc
 	Network     string
@@ -27,6 +40,8 @@ type reverseNetworkProxy struct {
 	Debug       bool
 }
 
+// NewReverseNetworkProxy returns a new network proxy that targets the given
+// host (target) stirng for a given network protocol and connection timeout.
 func NewReverseNetworkProxy(network, target string, to time.Duration) ReverseNetworkProxy {
 	return &reverseNetworkProxy{
 		Network: network,
