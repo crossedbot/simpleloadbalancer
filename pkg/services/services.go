@@ -8,13 +8,13 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/crossedbot/common/golang/logger"
 
 	"github.com/crossedbot/simpleloadbalancer/pkg/ratelimit"
+	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
 )
 
 const (
@@ -33,33 +33,15 @@ type StopFn func()
 
 // service represents a HTTP service.
 type service struct {
-	Target *url.URL               // Target service URL
-	Alive  bool                   // Health status
+	Target targets.Target         // Target service URL
 	Proxy  *httputil.ReverseProxy // Proxy to forward requests
-	Lock   *sync.RWMutex          // Internal lock for multiple readers
-}
-
-// IsAlive returns true if the service is alive.
-func (svc *service) IsAlive() bool {
-	var alive bool
-	svc.Lock.RLock()
-	alive = svc.Alive
-	svc.Lock.RUnlock()
-	return alive
-}
-
-// SetAlive sets the service status to alive.
-func (svc *service) SetAlive(alive bool) {
-	svc.Lock.Lock()
-	svc.Alive = alive
-	svc.Lock.Unlock()
 }
 
 // ServicePool represents a pool of services for tracking and balancing requests
 // on behalf of clients to the backend services.
 type ServicePool interface {
 	// AddService adds a new service to the pool for the given target URL.
-	AddService(target *url.URL)
+	AddService(target targets.Target) error
 
 	// GC starts the IP registry garbage collector and returns a stop
 	// function to exit garbage collection loop; effectively stopping the
@@ -95,25 +77,52 @@ func New(rate int64, rateCap int64) ServicePool {
 	}
 }
 
-func (pool *servicePool) AddService(target *url.URL) {
+func (pool *servicePool) AddService(target targets.Target) error {
+	proto := target.Get("protocol")
+	host := target.Get("host")
+	if port := target.Get("port"); port != "" {
+		host = net.JoinHostPort(host, port)
+	}
+	urlStr := fmt.Sprintf("%s://%s", proto, host)
+	targetUrl, err := url.Parse(urlStr)
+	if err != nil {
+		return err
+	}
 	svc := &service{
 		Target: target,
-		Alive:  true,
-		Lock:   new(sync.RWMutex),
-		Proxy:  httputil.NewSingleHostReverseProxy(target),
+		Proxy:  httputil.NewSingleHostReverseProxy(targetUrl),
 	}
 	svc.Proxy.ErrorHandler =
 		func(w http.ResponseWriter, r *http.Request, err error) {
 			// Handle service failures by retrying the service, if
 			// that fails attempt another service.
-			alive := pool.retryTargetService(w, r)
-			svc.SetAlive(alive)
-			if !alive && !pool.attemptNextService(w, r) {
+			alive := pool.RetryService(w, r)
+			svc.Target.SetAlive(alive)
+			if !alive && !pool.AttemptNextService(w, r) {
 				http.Error(w, "Service not available",
 					http.StatusServiceUnavailable)
 			}
 		}
 	pool.Services = append(pool.Services, svc)
+	return nil
+}
+
+// AttemptNextService attempts the next service at pool.Index + 1 and tracks the
+// attempts in the request's context. If the attempts exceed the maximum number
+// of service attempts, the request is canceled. Returns true if attempt is
+// made, otherwise false returns indicating the request was canceled.
+func (pool *servicePool) AttemptNextService(w http.ResponseWriter, r *http.Request) bool {
+	attempts := getAttemptsFromContext(r)
+	if attempts < ServiceMaxAttempts {
+		svc := pool.NextService()
+		if svc != nil {
+			ctx := context.WithValue(r.Context(),
+				ServiceContextAttemptKey, attempts+1)
+			svc.Proxy.ServeHTTP(w, r.WithContext(ctx))
+			return true
+		}
+	}
+	return false
 }
 
 func (pool *servicePool) CurrentService() *service {
@@ -123,6 +132,18 @@ func (pool *servicePool) CurrentService() *service {
 
 func (pool *servicePool) GC() StopFn {
 	return StopFn(pool.IPRegistry.GC())
+}
+
+// GetOrCreateLimiter returns the rate limiter for a given IP address. If a rate
+// limiter does not exist yet for the IP address, a new one is created and
+// returned.
+func (pool *servicePool) GetOrCreateLimiter(ip net.IP) ratelimit.LeakyBucketLimiter {
+	limiter := pool.IPRegistry.Get(ip)
+	if limiter == nil {
+		limiter = ratelimit.NewLeakyBucket(pool.RateCapacity, pool.Rate)
+		pool.IPRegistry.Set(ip, limiter)
+	}
+	return limiter
 }
 
 func (pool *servicePool) HealthCheck(interval time.Duration) StopFn {
@@ -136,9 +157,9 @@ func (pool *servicePool) HealthCheck(interval time.Duration) StopFn {
 				return
 			case <-t.C:
 				for _, svc := range pool.Services {
-					alive := isServiceAvailable(svc.Target,
-						"tcp", time.Second*3)
-					svc.SetAlive(alive)
+					alive := svc.Target.IsAvailable(
+						time.Second * 3)
+					svc.Target.SetAlive(alive)
 				}
 			}
 		}
@@ -158,7 +179,7 @@ func (pool *servicePool) LoadBalancer() http.HandlerFunc {
 		}
 		// Retrieve or create the rate limiter for the extracted IP and
 		// check if it has reached its request capacity.
-		limiter := pool.getOrCreateLimiter(ip)
+		limiter := pool.GetOrCreateLimiter(ip)
 		next, err := limiter.Next()
 		if err == ratelimit.ErrLimiterMaxCapacity {
 			msg := fmt.Sprintf(
@@ -169,7 +190,7 @@ func (pool *servicePool) LoadBalancer() http.HandlerFunc {
 			return
 		}
 		// Service the request
-		if !pool.attemptNextService(w, r) {
+		if !pool.AttemptNextService(w, r) {
 			http.Error(w, "Service not available",
 				http.StatusServiceUnavailable)
 			return
@@ -187,7 +208,7 @@ func (pool *servicePool) NextService() *service {
 	cycle := len(pool.Services) + next
 	for i := next; i < cycle; i++ {
 		idx := i % len(pool.Services)
-		if pool.Services[idx].IsAlive() {
+		if pool.Services[idx].Target.IsAlive() {
 			if i != next {
 				atomic.StoreUint64(&pool.Index, uint64(idx))
 			}
@@ -197,54 +218,25 @@ func (pool *servicePool) NextService() *service {
 	return nil
 }
 
-// attemptNextService attempts the next service at pool.Index + 1 and tracks the
-// attempts in the request's context. If the attempts exceed the maximum number
-// of service attempts, the request is canceled. Returns true if attempt is
-// made, otherwise false returns indicating the request was canceled.
-func (pool *servicePool) attemptNextService(w http.ResponseWriter, r *http.Request) bool {
-	attempts := getAttemptsFromContext(r)
-	if attempts < ServiceMaxAttempts {
-		svc := pool.NextService()
-		if svc != nil {
-			ctx := context.WithValue(r.Context(),
-				ServiceContextAttemptKey, attempts+1)
-			svc.Proxy.ServeHTTP(w, r.WithContext(ctx))
-			return true
-		}
-	}
-	return false
-}
-
-// getOrCreateLimiter returns the rate limiter for a given IP address. If a rate
-// limiter does not exist yet for the IP address, a new one is created and
-// returned.
-func (pool *servicePool) getOrCreateLimiter(ip net.IP) ratelimit.LeakyBucketLimiter {
-	limiter := pool.IPRegistry.Get(ip)
-	if limiter == nil {
-		limiter = ratelimit.NewLeakyBucket(pool.RateCapacity, pool.Rate)
-		pool.IPRegistry.Set(ip, limiter)
-	}
-	return limiter
-}
-
-// retryTargetService retries the current service at a set interval and tracks
-// the number of retries attempted in the request's context. If the number
-// retries exceed the maxmimum number of retries, the request is canceled for
-// the current service backend. Returns true if a retry was attempted, otherwise
+// RetryService retries the current service at a set interval and tracks the
+// number of retries attempted in the request's context. If the number retries
+// exceed the maxmimum number of retries, the request is canceled for the
+// current service backend. Returns true if a retry was attempted, otherwise
 // false is returned to indicate the request was canceled.
-func (pool *servicePool) retryTargetService(w http.ResponseWriter, r *http.Request) bool {
+func (pool *servicePool) RetryService(w http.ResponseWriter, r *http.Request) bool {
 	retries := getRetriesFromContext(r)
 	after := time.After(ServiceRetryInterval)
 	for retries < ServiceMaxRetries {
 		select {
 		case <-after:
 			svc := pool.CurrentService()
-			if svc != nil {
-				ctx := context.WithValue(r.Context(),
-					ServiceContextRetryKey, retries+1)
-				svc.Proxy.ServeHTTP(w, r.WithContext(ctx))
-				return true
+			if svc == nil {
+				return false
 			}
+			ctx := context.WithValue(r.Context(),
+				ServiceContextRetryKey, retries+1)
+			svc.Proxy.ServeHTTP(w, r.WithContext(ctx))
+			return true
 		}
 	}
 	return false
@@ -293,17 +285,6 @@ func getRetriesFromContext(r *http.Request) int {
 		return retries
 	}
 	return 0
-}
-
-// isServiceAvailable returns true if the given targeted URL is available for
-// the given protocol.
-func isServiceAvailable(target *url.URL, proto string, to time.Duration) bool {
-	conn, err := net.DialTimeout(proto, target.Host, to)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
 }
 
 // prExTim logs the execution time for a given routine name.

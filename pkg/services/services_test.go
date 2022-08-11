@@ -8,61 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/crossedbot/simpleloadbalancer/pkg/ratelimit"
+	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
 )
-
-func TestAttemptNextService(t *testing.T) {
-	rate := time.Second * 3
-	capacity := int64(100)
-	body := "{\"hello\": \"world\"}"
-	errBody := "Service not available\n"
-	req, err := http.NewRequest(http.MethodGet, "/", nil)
-	require.Nil(t, err)
-	req.Header.Add("X-REAL-IP", "127.0.0.1")
-
-	ts := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, "%s", body)
-		}),
-	)
-	defer ts.Close()
-
-	target, err := url.Parse(ts.URL)
-	require.Nil(t, err)
-	pool := &servicePool{
-		RateCapacity: capacity,
-		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
-		Rate:         int64(rate),
-	}
-	pool.AddService(target)
-
-	// Attempt open service
-	rr1 := httptest.NewRecorder()
-	pool.attemptNextService(rr1, req)
-	resp := rr1.Result()
-	respBody, err := ioutil.ReadAll(resp.Body)
-	require.Nil(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Equal(t, body, string(respBody))
-
-	// Attempt closed service
-	ts.Close()
-	rr2 := httptest.NewRecorder()
-	pool.attemptNextService(rr2, req)
-	resp = rr2.Result()
-	respBody, err = ioutil.ReadAll(resp.Body)
-	require.Nil(t, err)
-	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
-	require.Equal(t, errBody, string(respBody))
-}
 
 func TestGetAttemptsFromContext(t *testing.T) {
 	r, err := http.NewRequest(http.MethodGet, "localhost:8080", nil)
@@ -98,25 +51,6 @@ func TestGetIpFromRequest(t *testing.T) {
 	require.Equal(t, expected, actual.String())
 }
 
-func TestGetOrCreateLimiter(t *testing.T) {
-	rate := time.Second * 3
-	capacity := int64(100)
-	pool := &servicePool{
-		RateCapacity: capacity,
-		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
-		Rate:         int64(rate),
-	}
-	ip := net.ParseIP("127.0.0.1")
-	require.NotNil(t, ip)
-	limiter := pool.IPRegistry.Get(ip)
-	require.Nil(t, limiter)
-	actual := pool.getOrCreateLimiter(ip)
-	require.NotNil(t, actual)
-	expected := pool.IPRegistry.Get(ip)
-	require.NotNil(t, expected)
-	require.Equal(t, expected, actual)
-}
-
 func TestGetRetriesFromContext(t *testing.T) {
 	r, err := http.NewRequest(http.MethodGet, "localhost:8080", nil)
 	require.Nil(t, err)
@@ -131,76 +65,19 @@ func TestGetRetriesFromContext(t *testing.T) {
 	require.Equal(t, expected, actual)
 }
 
-func TestIsServiceAvailable(t *testing.T) {
-	ts := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, "%s", "{\"hello\": \"world\"}")
-		}),
-	)
-	defer ts.Close()
-
-	target, err := url.Parse(ts.URL)
-	require.Nil(t, err)
-
-	status := isServiceAvailable(target, "tcp", 1*time.Second)
-	require.True(t, status)
-
-	ts.Close()
-	status = isServiceAvailable(target, "tcp", 1*time.Second)
-	require.False(t, status)
-}
-
-func TestAddService(t *testing.T) {
+func TestServicePoolAddService(t *testing.T) {
 	pool := &servicePool{}
-	target, err := url.Parse("localhost:8080/hello")
+	targetUrl, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
+	target := targets.NewServiceTarget("", targetUrl)
 	pool.AddService(target)
 	require.Equal(t, 1, len(pool.Services))
 	svc := pool.Services[0]
 	require.NotNil(t, svc)
-	require.Equal(t, target.String(), svc.Target.String())
+	require.Equal(t, target.Summary(), svc.Target.Summary())
 }
 
-func TestCurrentService(t *testing.T) {
-	pool := &servicePool{}
-	target, err := url.Parse("localhost:8080/hello")
-	require.Nil(t, err)
-	pool.AddService(target)
-	svc := pool.CurrentService()
-	require.NotNil(t, svc)
-	require.Equal(t, target.String(), svc.Target.String())
-}
-
-func TestHealthCheck(t *testing.T) {
-	ts := httptest.NewServer(
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprintf(w, "%s", "{\"hello\": \"world\"}")
-		}),
-	)
-	defer ts.Close()
-
-	pool := &servicePool{}
-	target, err := url.Parse(ts.URL)
-	require.Nil(t, err)
-	pool.AddService(target)
-	svc := pool.CurrentService()
-	require.NotNil(t, svc)
-	interval := time.Millisecond * 100
-	stopHealthCheck := pool.HealthCheck(interval)
-	defer stopHealthCheck()
-
-	time.Sleep(interval)
-	require.True(t, svc.IsAlive())
-	ts.Close()
-	time.Sleep(interval)
-	require.False(t, svc.IsAlive())
-}
-
-func TestLoadBalancer(t *testing.T) {
+func TestServicePoolAttemptNextService(t *testing.T) {
 	rate := time.Second * 3
 	capacity := int64(100)
 	body := "{\"hello\": \"world\"}"
@@ -218,8 +95,115 @@ func TestLoadBalancer(t *testing.T) {
 	)
 	defer ts.Close()
 
-	target, err := url.Parse(ts.URL)
+	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
+	target := targets.NewServiceTarget("", targetUrl)
+	pool := &servicePool{
+		RateCapacity: capacity,
+		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
+		Rate:         int64(rate),
+	}
+	pool.AddService(target)
+
+	// Attempt open service
+	rr1 := httptest.NewRecorder()
+	pool.AttemptNextService(rr1, req)
+	resp := rr1.Result()
+	respBody, err := ioutil.ReadAll(resp.Body)
+	require.Nil(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, body, string(respBody))
+
+	// Attempt closed service
+	ts.Close()
+	rr2 := httptest.NewRecorder()
+	pool.AttemptNextService(rr2, req)
+	resp = rr2.Result()
+	respBody, err = ioutil.ReadAll(resp.Body)
+	require.Nil(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	require.Equal(t, errBody, string(respBody))
+}
+
+func TestServicePoolCurrentService(t *testing.T) {
+	pool := &servicePool{}
+	targetUrl, err := url.Parse("localhost:8080")
+	require.Nil(t, err)
+	target := targets.NewServiceTarget("", targetUrl)
+	pool.AddService(target)
+	svc := pool.CurrentService()
+	require.NotNil(t, svc)
+	require.Equal(t, target.Summary(), svc.Target.Summary())
+}
+
+func TestServicePoolGetOrCreateLimiter(t *testing.T) {
+	rate := time.Second * 3
+	capacity := int64(100)
+	pool := &servicePool{
+		RateCapacity: capacity,
+		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
+		Rate:         int64(rate),
+	}
+	ip := net.ParseIP("127.0.0.1")
+	require.NotNil(t, ip)
+	limiter := pool.IPRegistry.Get(ip)
+	require.Nil(t, limiter)
+	actual := pool.GetOrCreateLimiter(ip)
+	require.NotNil(t, actual)
+	expected := pool.IPRegistry.Get(ip)
+	require.NotNil(t, expected)
+	require.Equal(t, expected, actual)
+}
+
+func TestServicePoolHealthCheck(t *testing.T) {
+	ts := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "%s", "{\"hello\": \"world\"}")
+		}),
+	)
+	defer ts.Close()
+
+	pool := &servicePool{}
+	targetUrl, err := url.Parse(ts.URL)
+	require.Nil(t, err)
+	target := targets.NewServiceTarget("", targetUrl)
+	pool.AddService(target)
+	svc := pool.CurrentService()
+	require.NotNil(t, svc)
+	interval := time.Millisecond * 100
+	stopHealthCheck := pool.HealthCheck(interval)
+	defer stopHealthCheck()
+
+	time.Sleep(interval)
+	require.True(t, svc.Target.IsAlive())
+	ts.Close()
+	time.Sleep(interval)
+	require.False(t, svc.Target.IsAlive())
+}
+
+func TestServicePoolLoadBalancer(t *testing.T) {
+	rate := time.Second * 3
+	capacity := int64(100)
+	body := "{\"hello\": \"world\"}"
+	errBody := "Service not available\n"
+	req, err := http.NewRequest(http.MethodGet, "/", nil)
+	require.Nil(t, err)
+	req.Header.Add("X-REAL-IP", "127.0.0.1")
+
+	ts := httptest.NewServer(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "%s", body)
+		}),
+	)
+	defer ts.Close()
+
+	targetUrl, err := url.Parse(ts.URL)
+	require.Nil(t, err)
+	target := targets.NewServiceTarget("", targetUrl)
 	pool := &servicePool{
 		RateCapacity: capacity,
 		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
@@ -246,12 +230,14 @@ func TestLoadBalancer(t *testing.T) {
 	require.Equal(t, errBody, string(respBody))
 }
 
-func TestNextIndex(t *testing.T) {
+func TestServicePoolNextIndex(t *testing.T) {
 	pool := &servicePool{}
-	target1, err := url.Parse("localhost:8080/hello")
+	targetUrl1, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
-	target2, err := url.Parse("localhost:8080/world")
+	target1 := targets.NewServiceTarget("", targetUrl1)
+	targetUrl2, err := url.Parse("localhost:8081")
 	require.Nil(t, err)
+	target2 := targets.NewServiceTarget("", targetUrl2)
 	pool.AddService(target1)
 	pool.AddService(target2)
 	expected := 1
@@ -259,20 +245,22 @@ func TestNextIndex(t *testing.T) {
 	require.Equal(t, expected, actual)
 }
 
-func TestNextService(t *testing.T) {
+func TestServicePoolNextService(t *testing.T) {
 	pool := &servicePool{}
-	target1, err := url.Parse("localhost:8080/hello")
+	targetUrl1, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
-	target2, err := url.Parse("localhost:8080/world")
+	target1 := targets.NewServiceTarget("", targetUrl1)
+	targetUrl2, err := url.Parse("localhost:8081")
 	require.Nil(t, err)
+	target2 := targets.NewServiceTarget("", targetUrl2)
 	pool.AddService(target1)
 	pool.AddService(target2)
 	svc := pool.NextService()
 	require.NotNil(t, svc)
-	require.Equal(t, svc.Target.String(), target2.String())
+	require.Equal(t, svc.Target.Summary(), target2.Summary())
 }
 
-func TestRetryTargetService(t *testing.T) {
+func TestServicePoolRetryService(t *testing.T) {
 	rate := time.Second * 3
 	capacity := int64(100)
 	body := "{\"hello\": \"world\"}"
@@ -290,8 +278,9 @@ func TestRetryTargetService(t *testing.T) {
 	)
 	defer ts.Close()
 
-	target, err := url.Parse(ts.URL)
+	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
+	target := targets.NewServiceTarget("", targetUrl)
 	pool := &servicePool{
 		RateCapacity: capacity,
 		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
@@ -300,7 +289,7 @@ func TestRetryTargetService(t *testing.T) {
 	pool.AddService(target)
 
 	rr1 := httptest.NewRecorder()
-	pool.retryTargetService(rr1, req)
+	pool.RetryService(rr1, req)
 	resp := rr1.Result()
 	respBody, err := ioutil.ReadAll(resp.Body)
 	require.Nil(t, err)
@@ -309,29 +298,10 @@ func TestRetryTargetService(t *testing.T) {
 
 	ts.Close()
 	rr2 := httptest.NewRecorder()
-	pool.retryTargetService(rr2, req)
+	pool.RetryService(rr2, req)
 	resp = rr2.Result()
 	respBody, err = ioutil.ReadAll(resp.Body)
 	require.Nil(t, err)
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 	require.Equal(t, errBody, string(respBody))
-}
-
-func TestIsAlive(t *testing.T) {
-	svc := &service{
-		Alive: true,
-		Lock:  new(sync.RWMutex),
-	}
-	require.True(t, svc.IsAlive())
-	svc.Alive = false
-	require.False(t, svc.IsAlive())
-}
-
-func TestSetAlive(t *testing.T) {
-	svc := &service{
-		Alive: true,
-		Lock:  new(sync.RWMutex),
-	}
-	svc.SetAlive(false)
-	require.False(t, svc.IsAlive())
 }
