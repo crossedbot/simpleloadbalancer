@@ -17,3 +17,5 @@
 config.toml
 TODO
 NOTES.txt
+configs/
+tmp/
