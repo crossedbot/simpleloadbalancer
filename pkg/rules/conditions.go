@@ -6,9 +6,11 @@ import (
 	"strings"
 )
 
+// ConditionOp represents a condition operator.
 type ConditionOp uint32
 
 const (
+	// Condition operators
 	ConditionOpUnknown ConditionOp = iota
 	ConditionOpNotEqualInsensitive
 	ConditionOpEqualInsensitive
@@ -18,6 +20,8 @@ const (
 	ConditionOpContain
 )
 
+// ConditionOpStrings is a list of string representations for condition
+// operators.
 var ConditionOpStrings = []string{
 	"unknown",   // Unknown
 	"!~",        // Not Equal (Case-insensitive)
@@ -28,42 +32,51 @@ var ConditionOpStrings = []string{
 	"contains",  // Does Contain
 }
 
+// String returns the string representation of the condition operator.
 func (op ConditionOp) String() string {
-	if int(op) < len(ConditionOpStrings) {
-		return ConditionOpStrings[op]
+	i := int(op)
+	if i < len(ConditionOpStrings) {
+		return ConditionOpStrings[i]
 	}
 	return ""
 }
 
+// Condition represents a rule's condition string.
 type Condition string
 
+// Key returns the key part of the condition statement.
 func (c Condition) Key() string {
 	for _, opStr := range ConditionOpStrings[1:] {
-		if idx := strings.Index(c, opStr); idx > -1 {
-			return strings.TrimSpace(c[:idx])
+		if idx := strings.Index(string(c), opStr); idx > -1 {
+			return strings.TrimSpace(string(c[:idx]))
 		}
 	}
 	return ""
 }
 
+// Value returns the value part of the condition statement.
 func (c Condition) Value() string {
 	for _, opStr := range ConditionOpStrings[1:] {
-		if idx := strings.Index(c, opStr); idx > -1 {
-			return strings.TrimSpace(c[:idx])
+		if idx := strings.Index(string(c), opStr); idx > -1 {
+			s := string(c[idx:])
+			s = strings.TrimPrefix(s, opStr)
+			return strings.TrimSpace(s)
 		}
 	}
 	return ""
 }
 
+// Operator returns the condition operator of the condition statement.
 func (c Condition) Operator() ConditionOp {
 	for op, opStr := range ConditionOpStrings[1:] {
-		if idx := strings.Index(c, opStr); idx > -1 {
+		if idx := strings.Index(string(c), opStr); idx > -1 {
 			return ConditionOp(op + 1)
 		}
 	}
 	return ConditionOpUnknown
 }
 
+// Contains returns true if the given list 'a' contains element 'b'.
 func Contains(a, b interface{}) bool {
 	found, ok := DoesContain(a, b)
 	if !ok {
@@ -72,6 +85,7 @@ func Contains(a, b interface{}) bool {
 	return found
 }
 
+// NotContains returns true if the given list 'a' does not contain element 'b'.
 func NotContains(a, b interface{}) bool {
 	found, ok := DoesContain(a, b)
 	if !ok {
@@ -80,10 +94,12 @@ func NotContains(a, b interface{}) bool {
 	return !found
 }
 
+// Equal returns true if the given value 'a' equals value 'b'.
 func Equal(a, b interface{}) bool {
 	return AreEqual(a, b)
 }
 
+// NotEqual returns true if the given value 'a' does not equal value 'b'.
 func NotEqual(a, b interface{}) bool {
 	return !AreEqual(a, b)
 }
@@ -99,7 +115,7 @@ func AreEqual(a, b interface{}) bool {
 	if !ok {
 		return false
 	}
-	bytes.Equal(ab, bb)
+	return bytes.Equal(ab, bb)
 }
 
 // DoesContain checks if the given list 'a' contains element 'b'. Returns
@@ -113,12 +129,12 @@ func DoesContain(a, b interface{}) (bool, bool) {
 	aKind := aType.Kind()
 
 	if aKind == reflect.String {
-		bType := refelct.TypeOf(b)
+		bType := reflect.TypeOf(b)
 		if bType.Kind() != reflect.String {
 			return false, false
 		}
 		bValue := reflect.ValueOf(b)
-		return strings.Contains(aValue.String(), b.Value.String()), true
+		return strings.Contains(aValue.String(), bValue.String()), true
 	}
 
 	// XXX Probably not needed for this application
