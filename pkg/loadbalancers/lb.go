@@ -1,12 +1,14 @@
 package loadbalancers
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/crossedbot/common/golang/logger"
 
 	"github.com/crossedbot/simpleloadbalancer/pkg/networks"
+	"github.com/crossedbot/simpleloadbalancer/pkg/rules"
 	"github.com/crossedbot/simpleloadbalancer/pkg/services"
 	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
 )
@@ -16,17 +18,19 @@ type StopFn func()
 
 // LoadBalancer represents a common interface for all load balancer types.
 type LoadBalancer interface {
-	// AddTarget adds the given target to the load balancer with the given
-	// connection timeout.
-	AddTarget(target targets.Target, to time.Duration) error
+	// AddTargetGroup adds the given target group to the load balancer. For
+	// network load balancers, there is a single target group. Any
+	// additional target groups added to a NLB will simply append the
+	// targets to the existing group.
+	AddTargetGroup(group *targets.TargetGroup) error
 
-	// HealthCheck starts a routine to passively track the health of the the
-	// LB's targets. It returns stop function to stop the health check
-	// routine.
+	// HealthCheck starts a routine to passively track the health of the
+	// each LB target. It returns a stop function to stop the health check
+	// each target's health check routine.
 	HealthCheck(interval time.Duration) StopFn
 
-	// GC starts the IP registry garbage collector and returns a stop
-	// function to stop this routine.
+	// GC starts the IP registry garbage collector for each LB target and
+	// returns a stop function to stop these routines.
 	GC() StopFn
 
 	// Start starts the load balancer on the given listening address and
@@ -39,42 +43,90 @@ type LoadBalancer interface {
 	Type() string
 }
 
+// appTarget is mapping of an ALB's service pool and other informational fields
+// like a name and targeting rules.
+type appTarget struct {
+	Name string               // Target name
+	Rule rules.Rule           // Listener rule
+	Pool services.ServicePool // Service pool
+}
+
 // appLoadBalancer implements the LoadBalancer interface as application load
 // balancer and manages an internal service pool. Application means HTTP
 // services.
 type appLoadBalancer struct {
-	Pool services.ServicePool
+	Rate     int64       // Request Rate
+	Capacity int64       // Request capacity
+	Targets  []appTarget // Service targets
 }
 
 // NewApplicationLoadBalancer returns a new Load Balancer for targeted HTTP
 // services.
 func NewApplicationLoadBalancer(reqRate time.Duration, reqCap int64) LoadBalancer {
-	return &appLoadBalancer{Pool: services.New(int64(reqRate), reqCap)}
+	return &appLoadBalancer{
+		Rate:     int64(reqRate),
+		Capacity: int64(reqCap),
+	}
 }
 
-func (alb *appLoadBalancer) AddTarget(target targets.Target, to time.Duration) error {
-	return alb.Pool.AddService(target)
+func (alb *appLoadBalancer) AddTargetGroup(group *targets.TargetGroup) error {
+	pool := services.New(alb.Rate, alb.Capacity)
+	for _, t := range group.Targets {
+		if err := pool.AddService(t); err != nil {
+			return err
+		}
+	}
+	alb.Targets = append(alb.Targets, appTarget{
+		Name: group.Name,
+		Rule: group.Rule,
+		Pool: pool,
+	})
+	return nil
 }
 
 func (alb *appLoadBalancer) HealthCheck(interval time.Duration) StopFn {
-	return StopFn(alb.Pool.HealthCheck(interval))
+	stops := []StopFn{}
+	for _, t := range alb.Targets {
+		stops = append(stops, StopFn(t.Pool.HealthCheck(interval)))
+	}
+	return func() {
+		for _, fn := range stops {
+			fn()
+		}
+	}
 }
 
 func (alb *appLoadBalancer) GC() StopFn {
-	return StopFn(alb.Pool.GC())
+	stops := []StopFn{}
+	for _, t := range alb.Targets {
+		stops = append(stops, StopFn(t.Pool.GC()))
+	}
+	return func() {
+		for _, fn := range stops {
+			fn()
+		}
+	}
 }
 
 func (alb *appLoadBalancer) Start(laddr, protocol string) (StopFn, error) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		for _, t := range alb.Targets {
+			if t.Rule.Matches(r) {
+				t.Pool.LoadBalancer()(w, r)
+			}
+		}
+	}
 	server := http.Server{
 		Addr:    laddr,
-		Handler: http.HandlerFunc(alb.Pool.LoadBalancer()),
+		Handler: http.HandlerFunc(handler),
 	}
 	go func() {
-		if err := server.ListenAndServe(); err != nil {
+		err := server.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
 			logger.Error(err)
 		}
 	}()
-	return func() { server.Close() }, nil
+	return func() { server.Shutdown(context.Background()) }, nil
 }
 
 func (alb *appLoadBalancer) Type() string {
@@ -84,17 +136,26 @@ func (alb *appLoadBalancer) Type() string {
 // netLoadBalancer implements the LoadBalancer interface as a network (E.g. TCP,
 // UDP, etc.) load balancer and manages its own network pool.
 type netLoadBalancer struct {
-	Pool networks.NetworkPool
+	Pool    networks.NetworkPool
+	Timeout time.Duration
 }
 
 // NewNetworkLoadBalancer returns a LoadBalancer for network-level targets. This
 // means services that expect TCP, UDP, whatever connections.
-func NewNetworkLoadBalancer() LoadBalancer {
-	return &netLoadBalancer{Pool: networks.New()}
+func NewNetworkLoadBalancer(to time.Duration) LoadBalancer {
+	return &netLoadBalancer{
+		Pool:    networks.New(),
+		Timeout: to,
+	}
 }
 
-func (nlb *netLoadBalancer) AddTarget(target targets.Target, to time.Duration) error {
-	return nlb.Pool.AddTarget(target, to)
+func (nlb *netLoadBalancer) AddTargetGroup(group *targets.TargetGroup) error {
+	for _, t := range group.Targets {
+		if err := nlb.Pool.AddTarget(t, nlb.Timeout); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (nlb *netLoadBalancer) HealthCheck(interval time.Duration) StopFn {

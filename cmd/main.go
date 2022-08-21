@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/crossedbot/common/golang/config"
 	"github.com/crossedbot/common/golang/logger"
 	"github.com/crossedbot/common/golang/service"
 
 	"github.com/crossedbot/simpleloadbalancer/pkg/loadbalancers"
+	"github.com/crossedbot/simpleloadbalancer/pkg/rules"
 	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
 )
 
@@ -22,29 +22,6 @@ const (
 	// Exit codes
 	FATAL_EXITCODE = iota + 1
 )
-
-// LBTarget is the main configuration for a Load Balancer target. Setting the
-// URL will override the Host, Port, and Protocol fields.
-type LBTarget struct {
-	Name     string `toml:"name"`     // Name of the target
-	Host     string `toml:"host"`     // Hostname (IP/Domain/etc)
-	Port     int    `toml:"port"`     // Port number of the targeted service
-	Protocol string `toml:"protocol"` // TCP, UDP, HTTP, HTTPS, etc.
-	Timeout  int    `toml:"timeout"`  // Connection timeout
-	Url      string `toml:"url"`      // URL of the targeted service
-}
-
-// Config is the main configuration for this application.
-type Config struct {
-	Type                string     `toml:"type"`
-	Host                string     `toml:"host"`
-	Port                int        `toml:"port"`
-	Protocol            string     `toml:"protocol"`
-	RequestRate         int64      `toml:"request_rate"`
-	RequestRateCap      int64      `toml:"request_rate_cap"`
-	HealthCheckInterval int        `toml:"health_check_interval"`
-	Targets             []LBTarget `toml:"targets"`
-}
 
 // fatal logs the given format string and arguments as an error and exits with
 // FATAL_EXITCODE.
@@ -63,24 +40,32 @@ func newLb(c Config) (loadbalancers.LoadBalancer, error) {
 		lb = loadbalancers.NewApplicationLoadBalancer(rate,
 			c.RequestRateCap)
 	case loadbalancers.LoadBalancerTypeNet:
-		lb = loadbalancers.NewNetworkLoadBalancer()
+		timeout := time.Duration(c.Timeout) * time.Second
+		lb = loadbalancers.NewNetworkLoadBalancer(timeout)
 	default:
 		return nil, fmt.Errorf("Invalid load balancer type")
 	}
-	for _, target := range c.Targets {
-		var lbTarget targets.Target
-		if target.Url != "" {
-			v, err := url.Parse(target.Url)
-			if err != nil {
-				return nil, err
-			}
-			lbTarget = targets.NewServiceTarget(target.Name, v)
-		} else {
-			lbTarget = targets.NewTarget(target.Name, target.Host,
-				target.Port, target.Protocol)
+	for _, targetGroup := range c.TargetGroups {
+		rule := rules.Rule{
+			Action:     rules.NewRuleAction(targetGroup.Rule.Action),
+			Conditions: targetGroup.Rule.Conditions,
 		}
-		timeout := time.Duration(target.Timeout) * time.Second
-		lb.AddTarget(lbTarget, timeout)
+		tg := targets.NewTargetGroup(targetGroup.Name,
+			targetGroup.Protocol, rule)
+		for _, target := range targetGroup.Targets {
+			if target.Url != "" {
+				v, err := url.Parse(target.Url)
+				if err != nil {
+					return nil, err
+				}
+				tg.AddServiceTarget(v)
+			} else {
+				tg.AddTarget(target.Host, target.Port)
+			}
+		}
+		if err := lb.AddTargetGroup(tg); err != nil {
+			return nil, err
+		}
 	}
 	return lb, nil
 }
@@ -90,12 +75,10 @@ func newLb(c Config) (loadbalancers.LoadBalancer, error) {
 // returned.
 func run(ctx context.Context) error {
 	f := ParseFlags()
-	config.Path(f.ConfigFile)
-	var c Config
-	if err := config.Load(&c); err != nil {
+	c, err := LoadConfig(f.ConfigFile)
+	if err != nil {
 		return err
 	}
-
 	lb, err := newLb(c)
 	if err != nil {
 		return err

@@ -40,25 +40,25 @@ func TestGetRetriesFromContext(t *testing.T) {
 
 func TestGetTargetProtocol(t *testing.T) {
 	protocol := "not-tcp"
-	target := targets.NewTarget("", "127.0.0.1", 8080, protocol)
+	target := targets.NewTarget("127.0.0.1", 8080, protocol)
 	expected := ""
 	actual := getTargetProtocol(target)
 	require.Equal(t, expected, actual)
 
 	expected = "tcp"
-	target = targets.NewTarget("", "127.0.0.1", 8080, expected)
+	target = targets.NewTarget("127.0.0.1", 8080, expected)
 	actual = getTargetProtocol(target)
 	require.Equal(t, expected, actual)
 
 	expected = "udp"
-	target = targets.NewTarget("", "127.0.0.1", 8080, expected)
+	target = targets.NewTarget("127.0.0.1", 8080, expected)
 	actual = getTargetProtocol(target)
 	require.Equal(t, expected, actual)
 }
 
 func TestNetworkPoolAddTarget(t *testing.T) {
 	pool := &networkPool{}
-	target := targets.NewTarget("", "127.0.0.1", 8080, "tcp")
+	target := targets.NewTarget("127.0.0.1", 8080, "tcp")
 	pool.AddTarget(target, 0)
 	require.Equal(t, 1, len(pool.Targets))
 	tgt := pool.Targets[0]
@@ -68,7 +68,7 @@ func TestNetworkPoolAddTarget(t *testing.T) {
 
 func TestNetworkPoolCurrentTarget(t *testing.T) {
 	pool := &networkPool{}
-	target := targets.NewTarget("", "127.0.0.1", 8080, "tcp")
+	target := targets.NewTarget("127.0.0.1", 8080, "tcp")
 	pool.AddTarget(target, 0)
 	require.Equal(t, 1, len(pool.Targets))
 	tgt := pool.CurrentTarget()
@@ -89,7 +89,7 @@ func TestNetworkPoolHealthCheck(t *testing.T) {
 	pool := &networkPool{}
 	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool.AddTarget(target, 3*time.Second)
 	require.Equal(t, 1, len(pool.Targets))
 	tgt := pool.CurrentTarget()
@@ -119,7 +119,7 @@ func TestNetworkPoolLoadBalancer(t *testing.T) {
 	pool := &networkPool{}
 	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool.AddTarget(target, 3*time.Second)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -141,8 +141,8 @@ func TestNetworkPoolLoadBalancer(t *testing.T) {
 
 func TestNetworkPoolNextIndex(t *testing.T) {
 	pool := &networkPool{}
-	target1 := targets.NewTarget("", "127.0.0.1", 8080, "tcp")
-	target2 := targets.NewTarget("", "127.0.0.1", 8081, "tcp")
+	target1 := targets.NewTarget("127.0.0.1", 8080, "tcp")
+	target2 := targets.NewTarget("127.0.0.1", 8081, "tcp")
 	pool.AddTarget(target1, 0)
 	pool.AddTarget(target2, 0)
 	expected := 1
@@ -152,8 +152,8 @@ func TestNetworkPoolNextIndex(t *testing.T) {
 
 func TestNetworkPoolNextTarget(t *testing.T) {
 	pool := &networkPool{}
-	target1 := targets.NewTarget("", "127.0.0.1", 8080, "tcp")
-	target2 := targets.NewTarget("", "127.0.0.1", 8081, "tcp")
+	target1 := targets.NewTarget("127.0.0.1", 8080, "tcp")
+	target2 := targets.NewTarget("127.0.0.1", 8081, "tcp")
 	pool.AddTarget(target1, 0)
 	pool.AddTarget(target2, 0)
 	actual := pool.NextTarget()
@@ -175,7 +175,7 @@ func TestNetworkPoolAttemptNextTarget(t *testing.T) {
 	pool := &networkPool{}
 	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool.AddTarget(target, 3*time.Second)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -210,7 +210,7 @@ func TestNetworkPoolHandleConnection(t *testing.T) {
 	pool := &networkPool{}
 	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool.AddTarget(target, 3*time.Second)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -244,7 +244,7 @@ func TestNetworkPoolRetryTarget(t *testing.T) {
 	pool := &networkPool{}
 	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool.AddTarget(target, 3*time.Second)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
