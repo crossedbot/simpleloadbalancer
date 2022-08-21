@@ -9,7 +9,7 @@ type Flags struct {
 }
 
 func ParseFlags() Flags {
-	config := flag.String("config-file", "config.toml", "path to configuration file")
+	config := flag.String("config-file", "config.json", "path to configuration file")
 	flag.Parse()
 	return Flags{
 		ConfigFile: *config,

@@ -148,8 +148,10 @@ func (pool *servicePool) GetOrCreateLimiter(ip net.IP) ratelimit.LeakyBucketLimi
 
 func (pool *servicePool) HealthCheck(interval time.Duration) StopFn {
 	quit := make(chan struct{})
+	stopped := make(chan struct{})
 	t := time.NewTicker(interval)
 	go func() {
+		defer close(stopped)
 		for {
 			select {
 			case <-quit:
@@ -164,7 +166,10 @@ func (pool *servicePool) HealthCheck(interval time.Duration) StopFn {
 			}
 		}
 	}()
-	return func() { close(quit) }
+	return func() {
+		close(quit)
+		<-stopped
+	}
 }
 
 func (pool *servicePool) LoadBalancer() http.HandlerFunc {

@@ -52,8 +52,10 @@ func (reg *ipRegistry) Set(ip net.IP, limiter LeakyBucketLimiter) {
 
 func (reg *ipRegistry) GC() StopFn {
 	quit := make(chan struct{})
+	stopped := make(chan struct{})
 	t := time.NewTicker(reg.Ttl)
 	go func() {
+		defer close(stopped)
 		for {
 			select {
 			case <-quit:
@@ -64,5 +66,8 @@ func (reg *ipRegistry) GC() StopFn {
 			}
 		}
 	}()
-	return func() { close(quit) }
+	return func() {
+		close(quit)
+		<-stopped
+	}
 }

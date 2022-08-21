@@ -91,7 +91,6 @@ type Target interface {
 	// attribute. Keys include:
 	//   - alive
 	//   - host
-	//   - name
 	//   - port
 	//   - protocol
 	//   - type
@@ -114,7 +113,6 @@ type Target interface {
 
 // target implements the Target interface.
 type target struct {
-	Name       string
 	Port       int
 	Protocol   string
 	Host       string
@@ -124,13 +122,12 @@ type target struct {
 }
 
 // NewTarget returns a new Target for the given parameters.
-func NewTarget(name string, host string, port int, protocol string) Target {
+func NewTarget(host string, port int, protocol string) Target {
 	targetType := TargetTypeIP
 	if net.ParseIP(host) == nil {
 		targetType = TargetTypeDomain
 	}
 	return &target{
-		Name:       name,
 		Port:       port,
 		Protocol:   protocol,
 		Host:       host,
@@ -141,7 +138,7 @@ func NewTarget(name string, host string, port int, protocol string) Target {
 }
 
 // NewServiceTarget returns a new service target for the given URL.
-func NewServiceTarget(name string, target *url.URL) Target {
+func NewServiceTarget(target *url.URL) Target {
 	proto := target.Scheme
 	port := GetPort(proto)
 	host := target.Host
@@ -151,7 +148,7 @@ func NewServiceTarget(name string, target *url.URL) Target {
 			port = i
 		}
 	}
-	return NewTarget(name, host, port, proto)
+	return NewTarget(host, port, proto)
 }
 
 func (t *target) Get(key string) string {
@@ -161,8 +158,6 @@ func (t *target) Get(key string) string {
 		v = fmt.Sprintf("%t", t.Alive)
 	case "host":
 		v = t.Host
-	case "name":
-		v = t.Name
 	case "port":
 		v = strconv.Itoa(t.Port)
 	case "protocol":
@@ -189,7 +184,7 @@ func (t *target) SetAlive(v bool) {
 
 func (t *target) Summary() string {
 	summary := ""
-	keys := []string{"alive", "host", "name", "port", "protocol", "type"}
+	keys := []string{"alive", "host", "port", "protocol", "type"}
 	for i, k := range keys {
 		if v := t.Get(k); v != "" {
 			summary = fmt.Sprintf("%s%s=%s", summary, k, v)

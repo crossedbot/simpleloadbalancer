@@ -36,7 +36,7 @@ var (
 // XXX prob put in a common place
 type StopFn func()
 
-// networkTargetr represents a network level target; tracking its own reverse
+// networkTarget represents a network level target; tracking its own reverse
 // proxy.
 type networkTarget struct {
 	Target       targets.Target
@@ -49,6 +49,10 @@ type NetworkPool interface {
 	// AddTarget adds a given target to the pool and sets the connection
 	// timeout.
 	AddTarget(target targets.Target, to time.Duration) error
+
+	// HandleConnection acts like http.ServeHTTP and handles new connections
+	// accepted by a listener.
+	HandleConnection(conn net.Conn)
 
 	// HealthCheck starts a service health check routine and returns a stop
 	// function that can be called to exit this routine.
@@ -135,17 +139,19 @@ func (pool *networkPool) CurrentTarget() *networkTarget {
 	return pool.Targets[idx]
 }
 
-// HandleConnection acts like http.ServeHTTP and handles new connections
-// accepted by a listener.
 func (pool *networkPool) HandleConnection(conn net.Conn) {
 	ctx := context.Background()
-	pool.AttemptNextTarget(ctx, conn)
+	if !pool.AttemptNextTarget(ctx, conn) {
+		conn.Close()
+	}
 }
 
 func (pool *networkPool) HealthCheck(interval time.Duration) StopFn {
 	quit := make(chan struct{})
+	stopped := make(chan struct{})
 	t := time.NewTicker(interval)
 	go func() {
+		defer close(stopped)
 		for {
 			select {
 			case <-quit:
@@ -160,16 +166,21 @@ func (pool *networkPool) HealthCheck(interval time.Duration) StopFn {
 			}
 		}
 	}()
-	return func() { close(quit) }
+	return func() {
+		close(quit)
+		<-stopped
+	}
 }
 
 func (pool *networkPool) LoadBalancer(laddr, network string) (StopFn, error) {
 	quit := make(chan struct{})
-	listener, err := net.Listen("tcp", laddr)
+	stopped := make(chan struct{})
+	listener, err := net.Listen(network, laddr)
 	if err != nil {
 		return nil, err
 	}
 	go func() {
+		defer close(stopped)
 		for {
 			select {
 			case <-quit:
@@ -177,14 +188,22 @@ func (pool *networkPool) LoadBalancer(laddr, network string) (StopFn, error) {
 			default:
 				conn, err := listener.Accept()
 				if err != nil {
-					logger.Error(err)
+					if !isErrNetClosed(err) {
+						// Only log the error if it is
+						// unexpected
+						logger.Error(err)
+					}
 					continue
 				}
 				go pool.HandleConnection(conn)
 			}
 		}
 	}()
-	return func() { close(quit) }, nil
+	return func() {
+		close(quit)
+		listener.Close()
+		<-stopped
+	}, nil
 }
 
 // NextIndex returns the next index for the pool; setting what is returned as
@@ -273,4 +292,11 @@ func getTargetProtocol(target targets.Target) string {
 		}
 	}
 	return proto
+}
+
+// isErrNetClosed returns true if the given error is network closed error
+// (net.ErrClosed). Such an error typically propagates as a rules of a listener
+// closing and is returned by a blocked Accept routine.
+func isErrNetClosed(err error) bool {
+	return strings.Contains(err.Error(), net.ErrClosed.Error())
 }

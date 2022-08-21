@@ -69,7 +69,7 @@ func TestServicePoolAddService(t *testing.T) {
 	pool := &servicePool{}
 	targetUrl, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool.AddService(target)
 	require.Equal(t, 1, len(pool.Services))
 	svc := pool.Services[0]
@@ -97,7 +97,7 @@ func TestServicePoolAttemptNextService(t *testing.T) {
 
 	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool := &servicePool{
 		RateCapacity: capacity,
 		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
@@ -129,7 +129,7 @@ func TestServicePoolCurrentService(t *testing.T) {
 	pool := &servicePool{}
 	targetUrl, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool.AddService(target)
 	svc := pool.CurrentService()
 	require.NotNil(t, svc)
@@ -168,7 +168,7 @@ func TestServicePoolHealthCheck(t *testing.T) {
 	pool := &servicePool{}
 	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool.AddService(target)
 	svc := pool.CurrentService()
 	require.NotNil(t, svc)
@@ -203,7 +203,7 @@ func TestServicePoolLoadBalancer(t *testing.T) {
 
 	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool := &servicePool{
 		RateCapacity: capacity,
 		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
@@ -234,10 +234,10 @@ func TestServicePoolNextIndex(t *testing.T) {
 	pool := &servicePool{}
 	targetUrl1, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
-	target1 := targets.NewServiceTarget("", targetUrl1)
+	target1 := targets.NewServiceTarget(targetUrl1)
 	targetUrl2, err := url.Parse("localhost:8081")
 	require.Nil(t, err)
-	target2 := targets.NewServiceTarget("", targetUrl2)
+	target2 := targets.NewServiceTarget(targetUrl2)
 	pool.AddService(target1)
 	pool.AddService(target2)
 	expected := 1
@@ -249,10 +249,10 @@ func TestServicePoolNextService(t *testing.T) {
 	pool := &servicePool{}
 	targetUrl1, err := url.Parse("localhost:8080")
 	require.Nil(t, err)
-	target1 := targets.NewServiceTarget("", targetUrl1)
+	target1 := targets.NewServiceTarget(targetUrl1)
 	targetUrl2, err := url.Parse("localhost:8081")
 	require.Nil(t, err)
-	target2 := targets.NewServiceTarget("", targetUrl2)
+	target2 := targets.NewServiceTarget(targetUrl2)
 	pool.AddService(target1)
 	pool.AddService(target2)
 	svc := pool.NextService()
@@ -280,7 +280,7 @@ func TestServicePoolRetryService(t *testing.T) {
 
 	targetUrl, err := url.Parse(ts.URL)
 	require.Nil(t, err)
-	target := targets.NewServiceTarget("", targetUrl)
+	target := targets.NewServiceTarget(targetUrl)
 	pool := &servicePool{
 		RateCapacity: capacity,
 		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
