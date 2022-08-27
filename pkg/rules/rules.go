@@ -53,6 +53,8 @@ func (r Rule) Matches(req *http.Request) bool {
 			actual = req.URL.Path
 		case ConditionKeySourceIp:
 			actual = getIpFromRequest(req).String()
+		case ConditionKeyAlways:
+			return true
 		default:
 			return false
 		}

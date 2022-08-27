@@ -12,6 +12,7 @@ type ConditionOp uint32
 const (
 	// Condition operators
 	ConditionOpUnknown ConditionOp = iota
+	ConditionNoOp
 	ConditionOpNotEqualInsensitive
 	ConditionOpEqualInsensitive
 	ConditionOpNotEqual
@@ -24,6 +25,7 @@ const (
 // operators.
 var ConditionOpStrings = []string{
 	"unknown",   // Unknown
+	";",         // No Operation
 	"!~",        // Not Equal (Case-insensitive)
 	"=~",        // Equal (Case-insensitive)
 	"!=",        // Not Equal
