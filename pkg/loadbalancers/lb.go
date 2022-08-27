@@ -113,6 +113,7 @@ func (alb *appLoadBalancer) Start(laddr, protocol string) (StopFn, error) {
 		for _, t := range alb.Targets {
 			if t.Rule.Matches(r) {
 				t.Pool.LoadBalancer()(w, r)
+				break
 			}
 		}
 	}

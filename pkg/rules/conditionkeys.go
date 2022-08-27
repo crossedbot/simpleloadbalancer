@@ -15,6 +15,7 @@ const (
 	ConditionKeyMethod
 	ConditionKeyPath
 	ConditionKeySourceIp
+	ConditionKeyAlways
 )
 
 // ConditionKeyStrings is a list of string representations for condition keys.
@@ -24,6 +25,7 @@ var ConditionKeyStrings = []string{
 	"http-request-method",
 	"path-pattern",
 	"source-ip",
+	"always",
 }
 
 // NewConditionKey returns the ConditionKey for a given string. If the string
