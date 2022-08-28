@@ -6,8 +6,10 @@ import (
 	"strings"
 )
 
+// IPAddr represents an IP address as an array of 4-byte chunks.
 type IPAddr []uint32
 
+// NewIPAddr converts a network IP to an IPAddr and returns it.
 func NewIPAddr(ip net.IP) IPAddr {
 	if ip == nil {
 		return nil
@@ -29,6 +31,8 @@ func NewIPAddr(ip net.IP) IPAddr {
 	return addr
 }
 
+// NetworkContains returns true if the given network IP is contained in the
+// given network range.
 func NetworkContains(network net.IPNet, ip net.IP) bool {
 	addr := NewIPAddr(ip)
 	number := NewIPAddr(network.IP)
@@ -47,6 +51,7 @@ func NetworkContains(network net.IPNet, ip net.IP) bool {
 	return true
 }
 
+// IsCIDR returns true if the given string is formatted in CIDR notation.
 func IsCIDR(s string) bool {
 	if !strings.Contains(s, "/") {
 		return false

@@ -109,6 +109,8 @@ func getIpFromRequest(r *http.Request) net.IP {
 	return nil
 }
 
+// matchCIDR returns true if the IP address string is contained or not contained
+// in the given network range string depending on the operation.
 func matchCIDR(netStr, ipStr string, op ConditionOp) bool {
 	_, n, err := net.ParseCIDR(netStr)
 	if err != nil {
