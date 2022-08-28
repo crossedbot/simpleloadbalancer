@@ -110,7 +110,6 @@ func getIpFromRequest(r *http.Request) net.IP {
 }
 
 func matchCIDR(netStr, ipStr string, op ConditionOp) bool {
-	fmt.Println(netStr, ipStr)
 	_, n, err := net.ParseCIDR(netStr)
 	if err != nil {
 		return false
