@@ -17,7 +17,7 @@ var (
 // Rule contains a listener ruler's action and conditions.
 type Rule struct {
 	Action     RuleAction
-	Conditions []Condition
+	Conditions [][]Condition
 }
 
 // Valid returns nil if the rule is valid. Otherwise, an error is returned.
@@ -25,14 +25,20 @@ func (r Rule) Valid() error {
 	if r.Action == RuleActionUnknown {
 		return ErrUnknownRuleAction
 	}
-	for _, cond := range r.Conditions {
-		if NewConditionKey(cond.Key()) == ConditionKeyUnknown {
-			return fmt.Errorf("%s - invalid key '%s'",
-				ErrInvalidCondition, cond)
-		}
-		if cond.Operator() == ConditionOpUnknown {
-			return fmt.Errorf("%s - invalid operator '%s'",
-				ErrInvalidCondition, cond)
+	for i, cond := range r.Conditions {
+		for _, sub := range cond {
+			if NewConditionKey(sub.Key()) == ConditionKeyUnknown {
+				return fmt.Errorf(
+					"%s - invalid key '%s' (%d)",
+					ErrInvalidCondition, sub, i,
+				)
+			}
+			if sub.Operator() == ConditionOpUnknown {
+				return fmt.Errorf(
+					"%s - invalid operator '%s' (%d)",
+					ErrInvalidCondition, sub, i,
+				)
+			}
 		}
 	}
 	return nil
@@ -42,45 +48,18 @@ func (r Rule) Valid() error {
 // Otherwise, false is returned and indicates one of the conditions has failed.
 func (r Rule) Matches(req *http.Request) bool {
 	for _, cond := range r.Conditions {
-		// Match the condition's key
-		actual := ""
-		expected := cond.Value()
-		op := cond.Operator()
-		switch NewConditionKey(cond.Key()) {
-		case ConditionKeyHost:
-			actual = req.Host
-		case ConditionKeyMethod:
-			actual = req.Method
-		case ConditionKeyPath:
-			actual = req.URL.Path
-		case ConditionKeySourceIp:
-			actual = getIpFromRequest(req).String()
-			if IsCIDR(expected) {
-				return matchCIDR(expected, actual, op)
-			}
-		case ConditionKeyAlways:
-			return true
-		default:
-			return false
-		}
-		// Retrieve the conditions operation and perform it.
 		good := false
-		switch op {
-		case ConditionOpEqualInsensitive:
-			fallthrough
-		case ConditionOpEqual:
-			good = Equal(expected, actual)
-		case ConditionOpNotEqualInsensitive:
-			fallthrough
-		case ConditionOpNotEqual:
-			good = NotEqual(expected, actual)
-		case ConditionOpContain:
-			good = Contains(actual, expected)
-		case ConditionOpNotContain:
-			good = NotContains(actual, expected)
+		for _, sub := range cond {
+			if NewConditionKey(sub.Key()) == ConditionKeyAlways {
+				// Override all conditions
+				return true
+			}
+			if good = matchRequest(sub, req); good {
+				break
+			}
 		}
 		if !good {
-			// A condition failed, return false
+			// All sub-conditions failed, return false
 			return false
 		}
 	}
@@ -109,6 +88,26 @@ func getIpFromRequest(r *http.Request) net.IP {
 	return nil
 }
 
+// match returns true if the actual string matches the expected string depending
+// on the operation.
+func match(expected, actual string, op ConditionOp) bool {
+	switch op {
+	case ConditionOpEqualInsensitive:
+		fallthrough
+	case ConditionOpEqual:
+		return Equal(expected, actual)
+	case ConditionOpNotEqualInsensitive:
+		fallthrough
+	case ConditionOpNotEqual:
+		return NotEqual(expected, actual)
+	case ConditionOpContain:
+		return Contains(actual, expected)
+	case ConditionOpNotContain:
+		return NotContains(actual, expected)
+	}
+	return false
+}
+
 // matchCIDR returns true if the IP address string is contained or not contained
 // in the given network range string depending on the operation.
 func matchCIDR(netStr, ipStr string, op ConditionOp) bool {
@@ -117,16 +116,34 @@ func matchCIDR(netStr, ipStr string, op ConditionOp) bool {
 		return false
 	}
 	ip := net.ParseIP(ipStr)
-	contains := NetworkContains(*n, ip)
-	switch op {
-	case ConditionOpEqualInsensitive:
-		fallthrough
-	case ConditionOpEqual:
-		return contains
-	case ConditionOpNotEqualInsensitive:
-		fallthrough
-	case ConditionOpNotEqual:
-		return !contains
+	contains := fmt.Sprintf("%t", NetworkContains(*n, ip))
+	return match("true", contains, op)
+}
+
+// matchRequest returns true if the given request matches the given condition.
+func matchRequest(cond Condition, req *http.Request) bool {
+	actual := ""
+	expected := cond.Value()
+	op := cond.Operator()
+	switch NewConditionKey(cond.Key()) {
+	case ConditionKeyHost:
+		actual = req.Host
+		return match(expected, actual, op)
+	case ConditionKeyMethod:
+		actual = req.Method
+		return match(expected, actual, op)
+	case ConditionKeyPath:
+		actual = req.URL.Path
+		return match(expected, actual, op)
+	case ConditionKeySourceIp:
+		actual = getIpFromRequest(req).String()
+		if IsCIDR(expected) {
+			return matchCIDR(expected, actual, op)
+		} else {
+			return match(expected, actual, op)
+		}
+	case ConditionKeyAlways:
+		return true
 	}
 	return false
 }

@@ -20,8 +20,8 @@ type LBTarget struct {
 // commonly used with application load balancer to route strategies to specific
 // target groups.
 type LBRule struct {
-	Action     string            `json:"action"`
-	Conditions []rules.Condition `json:"conditions"`
+	Action     string              `json:"action"`
+	Conditions [][]rules.Condition `json:"conditions"`
 }
 
 // LBTargetGroup represents a load balancer target group in the configuration.
