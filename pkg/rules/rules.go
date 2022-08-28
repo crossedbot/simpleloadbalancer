@@ -44,6 +44,8 @@ func (r Rule) Matches(req *http.Request) bool {
 	for _, cond := range r.Conditions {
 		// Match the condition's key
 		actual := ""
+		expected := cond.Value()
+		op := cond.Operator()
 		switch NewConditionKey(cond.Key()) {
 		case ConditionKeyHost:
 			actual = req.Host
@@ -53,15 +55,17 @@ func (r Rule) Matches(req *http.Request) bool {
 			actual = req.URL.Path
 		case ConditionKeySourceIp:
 			actual = getIpFromRequest(req).String()
+			if IsCIDR(expected) {
+				return matchCIDR(expected, actual, op)
+			}
 		case ConditionKeyAlways:
 			return true
 		default:
 			return false
 		}
 		// Retrieve the conditions operation and perform it.
-		expected := cond.Value()
 		good := false
-		switch cond.Operator() {
+		switch op {
 		case ConditionOpEqualInsensitive:
 			fallthrough
 		case ConditionOpEqual:
@@ -103,4 +107,26 @@ func getIpFromRequest(r *http.Request) net.IP {
 		}
 	}
 	return nil
+}
+
+// matchCIDR returns true if the IP address string is contained or not contained
+// in the given network range string depending on the operation.
+func matchCIDR(netStr, ipStr string, op ConditionOp) bool {
+	_, n, err := net.ParseCIDR(netStr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(ipStr)
+	contains := NetworkContains(*n, ip)
+	switch op {
+	case ConditionOpEqualInsensitive:
+		fallthrough
+	case ConditionOpEqual:
+		return contains
+	case ConditionOpNotEqualInsensitive:
+		fallthrough
+	case ConditionOpNotEqual:
+		return !contains
+	}
+	return false
 }

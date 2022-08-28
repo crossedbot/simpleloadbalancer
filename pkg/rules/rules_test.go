@@ -80,3 +80,26 @@ func TestRuleMatches(t *testing.T) {
 	req.Host = invalidHostHeader
 	require.False(t, rule.Matches(req))
 }
+
+func TestRuleMatchesCIDR(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "/", nil)
+	require.Nil(t, err)
+
+	// Match when source IPs are contained in CIDR range
+	cond := Condition("source-ip = 127.0.0.0/24")
+	req.RemoteAddr = net.JoinHostPort("127.0.0.10", "8080")
+	rule := Rule{
+		Action:     RuleActionForward,
+		Conditions: []Condition{cond},
+	}
+	require.True(t, rule.Matches(req))
+	req.RemoteAddr = net.JoinHostPort("127.0.2.10", "8080")
+	require.False(t, rule.Matches(req))
+
+	// Match when source IPs are NOT contained in CIDR range
+	cond = Condition("source-ip != 127.0.0.0/24")
+	rule.Conditions = []Condition{cond}
+	require.True(t, rule.Matches(req))
+	req.RemoteAddr = net.JoinHostPort("127.0.0.10", "8080")
+	require.False(t, rule.Matches(req))
+}
