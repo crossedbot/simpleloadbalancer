@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -50,10 +51,6 @@ func (r Rule) Matches(req *http.Request) bool {
 	for _, cond := range r.Conditions {
 		good := false
 		for _, sub := range cond {
-			if NewConditionKey(sub.Key()) == ConditionKeyAlways {
-				// Override all conditions
-				return true
-			}
 			if good = matchRequest(sub, req); good {
 				break
 			}
@@ -93,10 +90,14 @@ func getIpFromRequest(r *http.Request) net.IP {
 func match(expected, actual string, op ConditionOp) bool {
 	switch op {
 	case ConditionOpEqualInsensitive:
+		expected = strings.ToLower(expected)
+		actual = strings.ToLower(actual)
 		fallthrough
 	case ConditionOpEqual:
 		return Equal(expected, actual)
 	case ConditionOpNotEqualInsensitive:
+		expected = strings.ToLower(expected)
+		actual = strings.ToLower(actual)
 		fallthrough
 	case ConditionOpNotEqual:
 		return NotEqual(expected, actual)
@@ -123,7 +124,14 @@ func matchCIDR(netStr, ipStr string, op ConditionOp) bool {
 // matchPath returns true if the expected path pattern matches the actual given
 // path depending on the operation.
 func matchPath(expected, actual string, op ConditionOp) bool {
-	// TODO clean paths before matching
+	if op == ConditionOpContain || op == ConditionOpNotContain {
+		return match(expected, actual, op)
+	}
+	if op == ConditionOpEqualInsensitive ||
+		op == ConditionOpNotEqualInsensitive {
+		expected = strings.ToLower(expected)
+		actual = strings.ToLower(actual)
+	}
 	matches := fmt.Sprintf("%t", matchStrings(expected, actual))
 	return match("true", matches, op)
 }

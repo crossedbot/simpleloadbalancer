@@ -49,6 +49,28 @@ func TestMatchCIDR(t *testing.T) {
 	}
 }
 
+func TestMatchPath(t *testing.T) {
+	tests := []struct {
+		A        string
+		B        string
+		Op       ConditionOp
+		Expected bool
+	}{
+		{"*", "/hello/world", ConditionOpEqual, true},
+		{"/goodbye/world", "/hello/world", ConditionOpNotEqual, true},
+		{"/hello", "/hello/world", ConditionOpContain, true},
+		{"/hello/world", "/goodbye", ConditionOpNotContain, true},
+		{"/hello", "/HELLO", ConditionOpEqualInsensitive, true},
+		{"/good", "/bad", ConditionOpNotEqualInsensitive, true},
+		{"/users/*", "/users/login", ConditionOpEqual, true},
+		{"/user*/log??", "/users/login", ConditionOpEqual, true},
+	}
+	for _, test := range tests {
+		require.Equal(t, test.Expected,
+			matchPath(test.A, test.B, test.Op))
+	}
+}
+
 func TestMatchRequest(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "/", nil)
 	require.Nil(t, err)
@@ -103,6 +125,46 @@ func TestMatchRequest(t *testing.T) {
 
 	cond = Condition("always;")
 	require.True(t, matchRequest(cond, req))
+}
+
+func TestMatchStrings(t *testing.T) {
+	tests := []struct {
+		Patt     string
+		Str      string
+		Expected bool
+	}{
+		{"*", "helloworld", true},
+		{"hell*orld", "helloworld", true},
+		{"h*world", "hello", false},
+		{"*hello", "helloworld", false},
+		{"he?lo*d", "helloworld", true},
+		{"*elo*", "helloworld", false},
+		{"*abc***/*d*e*f*/**gh**ij*k*", "aabc/def/ghijk", true},
+		{"abc***/*d*e*f*/**gh**ij*k*", "aabc/def/ghijk", false},
+	}
+	for _, test := range tests {
+		require.Equal(t, test.Expected,
+			matchStrings(test.Patt, test.Str))
+	}
+}
+
+func TestRmRepeatRune(t *testing.T) {
+	tests := []struct {
+		Str      string
+		Run      rune
+		Expected string
+	}{
+		{"*****", '*', "*"},
+		{"** ** **", '*', "* * *"},
+		{"a***b", '*', "a*b"},
+		{"***aaa", '*', "*aaa"},
+		{"abc", '*', "abc"},
+		{"abc***", '*', "abc*"},
+	}
+	for _, test := range tests {
+		require.Equal(t, test.Expected,
+			rmRepeatRune(test.Str, test.Run))
+	}
 }
 
 func TestRuleValid(t *testing.T) {
