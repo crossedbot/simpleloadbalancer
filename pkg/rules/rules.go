@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -50,10 +51,6 @@ func (r Rule) Matches(req *http.Request) bool {
 	for _, cond := range r.Conditions {
 		good := false
 		for _, sub := range cond {
-			if NewConditionKey(sub.Key()) == ConditionKeyAlways {
-				// Override all conditions
-				return true
-			}
 			if good = matchRequest(sub, req); good {
 				break
 			}
@@ -93,10 +90,14 @@ func getIpFromRequest(r *http.Request) net.IP {
 func match(expected, actual string, op ConditionOp) bool {
 	switch op {
 	case ConditionOpEqualInsensitive:
+		expected = strings.ToLower(expected)
+		actual = strings.ToLower(actual)
 		fallthrough
 	case ConditionOpEqual:
 		return Equal(expected, actual)
 	case ConditionOpNotEqualInsensitive:
+		expected = strings.ToLower(expected)
+		actual = strings.ToLower(actual)
 		fallthrough
 	case ConditionOpNotEqual:
 		return NotEqual(expected, actual)
@@ -120,6 +121,21 @@ func matchCIDR(netStr, ipStr string, op ConditionOp) bool {
 	return match("true", contains, op)
 }
 
+// matchPath returns true if the expected path pattern matches the actual given
+// path depending on the operation.
+func matchPath(expected, actual string, op ConditionOp) bool {
+	if op == ConditionOpContain || op == ConditionOpNotContain {
+		return match(expected, actual, op)
+	}
+	if op == ConditionOpEqualInsensitive ||
+		op == ConditionOpNotEqualInsensitive {
+		expected = strings.ToLower(expected)
+		actual = strings.ToLower(actual)
+	}
+	matches := fmt.Sprintf("%t", matchStrings(expected, actual))
+	return match("true", matches, op)
+}
+
 // matchRequest returns true if the given request matches the given condition.
 func matchRequest(cond Condition, req *http.Request) bool {
 	actual := ""
@@ -134,7 +150,7 @@ func matchRequest(cond Condition, req *http.Request) bool {
 		return match(expected, actual, op)
 	case ConditionKeyPath:
 		actual = req.URL.Path
-		return match(expected, actual, op)
+		return matchPath(expected, actual, op)
 	case ConditionKeySourceIp:
 		actual = getIpFromRequest(req).String()
 		if IsCIDR(expected) {
@@ -146,4 +162,52 @@ func matchRequest(cond Condition, req *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+// matchStrings return true if the actual string matches the expected string.
+// The expected string may contain wildcard characters ('*' to match
+// zero-to-many characters or '?' to match a single character) for simplified
+// pattern matching.
+func matchStrings(expected, actual string) bool {
+	// Remove repetitive wildcard characters in the expected string.
+	expected = rmRepeatRune(expected, '*')
+	// If the expected is a just the wildcard or both expected and actual
+	// are empty, there is nothing to do.
+	if expected == "*" || (expected == "" && actual == "") {
+		return true
+	}
+	// This function is recursive and if the expected string is shorter than
+	// actual or vice versa return false - they are obviously not equal.
+	if expected == "" || (expected != "*" && actual == "") {
+		return false
+	}
+	// If the first characters of each string are equal (I.E. matching
+	// wildcard or the same literal character), try to match everything
+	// after.
+	if expected[0] == '?' || expected[0] == actual[0] {
+		return matchStrings(expected[1:], actual[1:])
+	}
+	// If the expected string starts with a wildcard, try to match
+	// everything after with the actual or (if that fails) that may be part
+	// of the wildcard part of the actual string, so try to match everything
+	// after said part with expected.
+	if expected[0] == '*' {
+		return matchStrings(expected[1:], actual) ||
+			matchStrings(expected, actual[1:])
+	}
+	return false
+}
+
+// rmRepeatRune returns a string that does not contain successive duplicates of
+// the given character.
+func rmRepeatRune(s string, c rune) string {
+	var buf bytes.Buffer
+	var last rune
+	for _, r := range s {
+		if (r != last || last != c) || r == 0 {
+			buf.WriteRune(r)
+			last = r
+		}
+	}
+	return buf.String()
 }

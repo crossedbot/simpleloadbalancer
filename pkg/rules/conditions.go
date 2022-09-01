@@ -91,7 +91,7 @@ func Contains(a, b interface{}) bool {
 func NotContains(a, b interface{}) bool {
 	found, ok := DoesContain(a, b)
 	if !ok {
-		return false
+		return true
 	}
 	return !found
 }
