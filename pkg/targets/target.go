@@ -109,6 +109,10 @@ type Target interface {
 	// Summary returns a comma-separated string of key-value pairs of the
 	// target's attributes.
 	Summary() string
+
+	// URL returns a URL formatted string of the target.
+	// ("<scheme>://<host>[:<port>]")
+	URL() string
 }
 
 // target implements the Target interface.
@@ -194,6 +198,14 @@ func (t *target) Summary() string {
 		}
 	}
 	return summary
+}
+
+func (t *target) URL() string {
+	url := fmt.Sprintf("%s://%s", t.Protocol, t.Host)
+	if t.Port > 0 {
+		url = fmt.Sprintf("%s:%d", url, t.Port)
+	}
+	return url
 }
 
 func (t *target) IsAvailable(to time.Duration) bool {

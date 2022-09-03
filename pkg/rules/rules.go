@@ -143,7 +143,7 @@ func matchRequest(cond Condition, req *http.Request) bool {
 	op := cond.Operator()
 	switch NewConditionKey(cond.Key()) {
 	case ConditionKeyHost:
-		actual = req.Host
+		actual = req.Header.Get("Host")
 		return match(expected, actual, op)
 	case ConditionKeyMethod:
 		actual = req.Method

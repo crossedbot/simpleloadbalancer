@@ -2,6 +2,7 @@ package loadbalancers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -11,6 +12,10 @@ import (
 	"github.com/crossedbot/simpleloadbalancer/pkg/rules"
 	"github.com/crossedbot/simpleloadbalancer/pkg/services"
 	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
+)
+
+var (
+	ErrNoTargetsInGroup = errors.New("Target group must contain at least one target")
 )
 
 // StopFn is a prototype for a stop routine function.
@@ -38,6 +43,10 @@ type LoadBalancer interface {
 	// routine.
 	Start(laddr, protocol string) (StopFn, error)
 
+	// SetTLS enables TLS connections and sets the certificate and private
+	// key to the given filenames.
+	SetTLS(certFile, keyFile string)
+
 	// Type returns the string representation of the load balancer's type;
 	// this is the long name.
 	Type() string
@@ -46,18 +55,22 @@ type LoadBalancer interface {
 // appTarget is mapping of an ALB's service pool and other informational fields
 // like a name and targeting rules.
 type appTarget struct {
-	Name string               // Target name
-	Rule rules.Rule           // Listener rule
-	Pool services.ServicePool // Service pool
+	Name        string               // Target name
+	Rule        rules.Rule           // Listener rule
+	RedirectUrl string               // Redirect URL
+	Pool        services.ServicePool // Service pool
 }
 
 // appLoadBalancer implements the LoadBalancer interface as application load
 // balancer and manages an internal service pool. Application means HTTP
 // services.
 type appLoadBalancer struct {
-	Rate     int64       // Request Rate
-	Capacity int64       // Request capacity
-	Targets  []appTarget // Service targets
+	Rate        int64       // Request Rate
+	Capacity    int64       // Request capacity
+	Targets     []appTarget // Service targets
+	TlsEnabled  bool        // Indicates TLS is enabled
+	TlsCertFile string      // TLS certificate filename
+	TlsKeyFile  string      // TLS private key filename
 }
 
 // NewApplicationLoadBalancer returns a new Load Balancer for targeted HTTP
@@ -70,6 +83,17 @@ func NewApplicationLoadBalancer(reqRate time.Duration, reqCap int64) LoadBalance
 }
 
 func (alb *appLoadBalancer) AddTargetGroup(group *targets.TargetGroup) error {
+	if len(group.Targets) == 0 {
+		return ErrNoTargetsInGroup
+	}
+	if group.Rule.Action == rules.RuleActionRedirect {
+		alb.Targets = append(alb.Targets, appTarget{
+			Name:        group.Name,
+			Rule:        group.Rule,
+			RedirectUrl: group.Targets[0].URL(),
+		})
+		return nil
+	}
 	pool := services.New(alb.Rate, alb.Capacity)
 	for _, t := range group.Targets {
 		if err := pool.AddService(t); err != nil {
@@ -87,7 +111,10 @@ func (alb *appLoadBalancer) AddTargetGroup(group *targets.TargetGroup) error {
 func (alb *appLoadBalancer) HealthCheck(interval time.Duration) StopFn {
 	stops := []StopFn{}
 	for _, t := range alb.Targets {
-		stops = append(stops, StopFn(t.Pool.HealthCheck(interval)))
+		if t.Pool != nil {
+			stops = append(stops,
+				StopFn(t.Pool.HealthCheck(interval)))
+		}
 	}
 	return func() {
 		for _, fn := range stops {
@@ -99,7 +126,9 @@ func (alb *appLoadBalancer) HealthCheck(interval time.Duration) StopFn {
 func (alb *appLoadBalancer) GC() StopFn {
 	stops := []StopFn{}
 	for _, t := range alb.Targets {
-		stops = append(stops, StopFn(t.Pool.GC()))
+		if t.Pool != nil {
+			stops = append(stops, StopFn(t.Pool.GC()))
+		}
 	}
 	return func() {
 		for _, fn := range stops {
@@ -108,11 +137,26 @@ func (alb *appLoadBalancer) GC() StopFn {
 	}
 }
 
+func (alb *appLoadBalancer) Redirect(w http.ResponseWriter, r *http.Request, url string) {
+	target := url + r.URL.Path
+	if len(r.URL.RawQuery) > 0 {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
 func (alb *appLoadBalancer) Start(laddr, protocol string) (StopFn, error) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		for _, t := range alb.Targets {
 			if t.Rule.Matches(r) {
-				t.Pool.LoadBalancer()(w, r)
+				switch t.Rule.Action {
+				case rules.RuleActionForward:
+					if t.Pool != nil {
+						t.Pool.LoadBalancer()(w, r)
+					}
+				case rules.RuleActionRedirect:
+					alb.Redirect(w, r, t.RedirectUrl)
+				}
 				break
 			}
 		}
@@ -122,12 +166,24 @@ func (alb *appLoadBalancer) Start(laddr, protocol string) (StopFn, error) {
 		Handler: http.HandlerFunc(handler),
 	}
 	go func() {
-		err := server.ListenAndServe()
+		var err error
+		if alb.TlsEnabled {
+			err = server.ListenAndServeTLS(alb.TlsCertFile,
+				alb.TlsKeyFile)
+		} else {
+			err = server.ListenAndServe()
+		}
 		if err != nil && err != http.ErrServerClosed {
 			logger.Error(err)
 		}
 	}()
 	return func() { server.Shutdown(context.Background()) }, nil
+}
+
+func (alb *appLoadBalancer) SetTLS(certFile, keyFile string) {
+	alb.TlsEnabled = true
+	alb.TlsCertFile = certFile
+	alb.TlsKeyFile = keyFile
 }
 
 func (alb *appLoadBalancer) Type() string {
@@ -170,6 +226,10 @@ func (nlb *netLoadBalancer) GC() StopFn {
 func (nlb *netLoadBalancer) Start(laddr, protocol string) (StopFn, error) {
 	stopFn, err := nlb.Pool.LoadBalancer(laddr, protocol)
 	return StopFn(stopFn), err
+}
+
+func (nlb *netLoadBalancer) SetTLS(certFile, keyFile string) {
+	// XXX NoOp
 }
 
 func (nlb *netLoadBalancer) Type() string {
