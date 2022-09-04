@@ -137,6 +137,8 @@ func (alb *appLoadBalancer) GC() StopFn {
 	}
 }
 
+// Redirect sends a redirect to the given URL target with a status code of Moved
+// Permanently (HTTP 301). The request's path and query is appended to the URL.
 func (alb *appLoadBalancer) Redirect(w http.ResponseWriter, r *http.Request, url string) {
 	target := url + r.URL.Path
 	if len(r.URL.RawQuery) > 0 {

@@ -90,7 +90,12 @@ func (pool *servicePool) AddService(target targets.Target) error {
 	}
 	svc := &service{
 		Target: target,
-		Proxy:  httputil.NewSingleHostReverseProxy(targetUrl),
+		// XXX Targets that use self-signed certs won't work without
+		// turning off verification or importing the cert. The former
+		// can be done via Transport in a custom net.Dialer, the latter
+		// should probably be done on the system (check man pages of
+		// something like update-ca-certificates).
+		Proxy: httputil.NewSingleHostReverseProxy(targetUrl),
 	}
 	svc.Proxy.ErrorHandler =
 		func(w http.ResponseWriter, r *http.Request, err error) {

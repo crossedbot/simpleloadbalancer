@@ -1,6 +1,7 @@
 package targets
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -39,6 +40,7 @@ var (
 
 	// Errors
 	ErrMissingProtocol = errors.New("Target is missing protocol")
+	ErrUnknownProtocol = errors.New("Unknown network protocol")
 )
 
 // GetPort returns the common port number for the given application protocol
@@ -62,6 +64,16 @@ func GetProtocol(port int) string {
 // protocol string.
 func GetTransport(protocol string) []string {
 	return ProtocolTransports[strings.ToLower(protocol)]
+}
+
+// IsTLS returns true if the given protocol uses SSL/TLS; I.E. HTTPS.
+func IsTLS(protocol string) bool {
+	isTls := false
+	switch strings.ToLower(protocol) {
+	case "https", "ldaps":
+		isTls = true
+	}
+	return isTls
 }
 
 // TargetType represents a type of load balancer target type.
@@ -210,15 +222,40 @@ func (t *target) URL() string {
 
 func (t *target) IsAvailable(to time.Duration) bool {
 	available := false
+	useTls := IsTLS(t.Protocol)
 	hostPort := net.JoinHostPort(t.Host, strconv.Itoa(t.Port))
 	networks := GetTransport(t.Protocol)
 	for _, network := range networks {
-		conn, err := net.DialTimeout(network, hostPort, to)
-		if err == nil {
-			conn.Close()
-			available = true
+		available = dialTarget(network, hostPort, to, useTls)
+		if available {
 			break
 		}
 	}
 	return available
+}
+
+// dialTarget returns true if a successful connection can be made to the address
+// using the given network procotol.
+func dialTarget(network, addr string, to time.Duration, useTls bool) bool {
+	var conn net.Conn
+	var err error
+	if useTls {
+		// We can skip checking the validity of the cert for testing the
+		// connection.
+		config := tls.Config{InsecureSkipVerify: true}
+		conn, err = dialTlsTimeout(network, addr, to, &config)
+	} else {
+		conn, err = net.DialTimeout(network, addr, to)
+	}
+	if err == nil {
+		conn.Close()
+		return true
+	}
+	return false
+}
+
+// dialTlsTimeout is a wrapper for tls.DialWithDialer but with a set timeout.
+func dialTlsTimeout(network, addr string, to time.Duration, config *tls.Config) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: to}
+	return tls.DialWithDialer(dialer, network, addr, config)
 }

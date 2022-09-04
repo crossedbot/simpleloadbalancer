@@ -33,6 +33,22 @@ func TestGetTransport(t *testing.T) {
 	}
 }
 
+func TestIsTLS(t *testing.T) {
+	tests := []struct {
+		Proto    string
+		Expected bool
+	}{
+		{"https", true},
+		{"http", false},
+		{"LDAPS", true},
+		{"LDAP", false},
+		{"wat", false},
+	}
+	for _, test := range tests {
+		require.Equal(t, test.Expected, IsTLS(test.Proto))
+	}
+}
+
 func TestTargetGet(t *testing.T) {
 	host := "example.com"
 	port := "8080"
@@ -103,4 +119,38 @@ func TestTargetSummary(t *testing.T) {
 	require.NotNil(t, target)
 	summary := target.Summary()
 	require.Equal(t, expected, summary)
+}
+
+func TestTargetURL(t *testing.T) {
+	tests := []struct {
+		Host     string
+		Port     int
+		Protocol string
+		Expected string
+	}{
+		{
+			Host:     "example.com",
+			Port:     0,
+			Protocol: "https",
+			Expected: "https://example.com",
+		}, {
+			Host:     "127.0.0.1",
+			Port:     8080,
+			Protocol: "http",
+			Expected: "http://127.0.0.1:8080",
+		}, {
+			Host:     "10.125.16.2",
+			Port:     0,
+			Protocol: "ssh",
+			Expected: "ssh://10.125.16.2",
+		},
+	}
+	for _, test := range tests {
+		tgt := &target{
+			Host:     test.Host,
+			Port:     test.Port,
+			Protocol: test.Protocol,
+		}
+		require.Equal(t, test.Expected, tgt.URL())
+	}
 }
