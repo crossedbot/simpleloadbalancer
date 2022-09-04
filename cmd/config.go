@@ -40,7 +40,10 @@ type Config struct {
 	Host                string          `json:"host"`     // Listener host
 	Port                int             `json:"port"`     // Listener port
 	Protocol            string          `json:"protocol"` // Listener protocol
-	Timeout             int64           `json:"timeout"`  // Connection timeout
+	TlsEnabled          bool            `json:"tls_enabled"`
+	TlsCertFile         string          `json:"tls_cert_file"`
+	TlsKeyFile          string          `json:"tls_key_file"`
+	Timeout             int64           `json:"timeout"` // Connection timeout
 	RequestRate         int64           `json:"request_rate"`
 	RequestRateCap      int64           `json:"request_rate_cap"`
 	HealthCheckInterval int             `json:"health_check_interval"`

@@ -76,13 +76,13 @@ func TestMatchRequest(t *testing.T) {
 	require.Nil(t, err)
 
 	cond := Condition("host-header = example.com")
-	req.Host = "example.com"
+	req.Header.Set("Host", "example.com")
 	require.True(t, matchRequest(cond, req))
-	req.Host = "notexample.com"
+	req.Header.Set("Host", "notexample.com")
 	require.False(t, matchRequest(cond, req))
 	cond = Condition("host-header != example.com")
 	require.True(t, matchRequest(cond, req))
-	req.Host = "example.com"
+	req.Header.Set("Host", "example.com")
 	require.False(t, matchRequest(cond, req))
 
 	cond = Condition("http-request-method = GET")
@@ -220,7 +220,7 @@ func TestRuleMatches(t *testing.T) {
 	}
 	req, err := http.NewRequest(httpMethod, pathPattern, nil)
 	require.Nil(t, err)
-	req.Host = hostHeader
+	req.Header.Set("Host", hostHeader)
 	req.RemoteAddr = net.JoinHostPort(sourceIp, "8080")
 	require.True(t, rule.Matches(req))
 
@@ -236,7 +236,7 @@ func TestRuleMatches(t *testing.T) {
 	require.False(t, rule.Matches(req))
 
 	req.URL.Path = pathPattern
-	req.Host = invalidHostHeader
+	req.Header.Set("Host", invalidHostHeader)
 	require.False(t, rule.Matches(req))
 }
 

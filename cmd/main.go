@@ -45,6 +45,9 @@ func newLb(c Config) (loadbalancers.LoadBalancer, error) {
 	default:
 		return nil, fmt.Errorf("Invalid load balancer type")
 	}
+	if c.TlsEnabled {
+		lb.SetTLS(c.TlsCertFile, c.TlsKeyFile)
+	}
 	for _, targetGroup := range c.TargetGroups {
 		rule := rules.Rule{
 			Action:     rules.NewRuleAction(targetGroup.Rule.Action),
@@ -88,13 +91,13 @@ func run(ctx context.Context) error {
 	stopHealthCheck := lb.HealthCheck(
 		time.Duration(c.HealthCheckInterval) * time.Second)
 	defer stopHealthCheck()
+
 	laddr := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 	stopLb, err := lb.Start(laddr, c.Protocol)
 	if err != nil {
 		return err
 	}
 	defer stopLb()
-
 	logger.Info(fmt.Sprintf("Listening on %s", laddr))
 	<-ctx.Done()
 	logger.Info("Received signal, shutting down...")
