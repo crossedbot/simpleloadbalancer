@@ -75,8 +75,8 @@ func newLb(c Config) (loadbalancers.LoadBalancer, error) {
 	if c.TlsEnabled {
 		lb.SetTLS(c.TlsCertFile, c.TlsKeyFile)
 	}
-	if c.ErrRespFmt != "" {
-		lb.SetErrResponseFormat(c.ErrRespFmt)
+	if c.RespFormat != "" {
+		lb.SetResponseFormat(c.RespFormat)
 	}
 	err := addTargetGroups(lb, c.TargetGroups)
 	return lb, err

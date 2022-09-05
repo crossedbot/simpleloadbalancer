@@ -69,7 +69,7 @@ func TestGetRetriesFromContext(t *testing.T) {
 
 func TestHandleServiceUnavailable(t *testing.T) {
 	rr1 := httptest.NewRecorder()
-	errFmt := targets.ResponseFormatHtml
+	errFmt := ResponseFormatHtml
 	expected := templates.ServiceUnavailablePage()
 	handleServiceUnavailable(rr1, errFmt)
 	resp := rr1.Result()
@@ -80,8 +80,8 @@ func TestHandleServiceUnavailable(t *testing.T) {
 
 	expected = "Service not available\n"
 	rr2 := httptest.NewRecorder()
-	errFmt = targets.ResponseFormatJson
-	b, err := json.Marshal(targets.ResponseError{
+	errFmt = ResponseFormatJson
+	b, err := json.Marshal(ResponseError{
 		Code:    http.StatusServiceUnavailable,
 		Message: expected[:len(expected)-1],
 	})
@@ -94,7 +94,7 @@ func TestHandleServiceUnavailable(t *testing.T) {
 	require.Equal(t, b, actual)
 
 	rr3 := httptest.NewRecorder()
-	errFmt = targets.ResponseFormatPlain
+	errFmt = ResponseFormatPlain
 	handleServiceUnavailable(rr3, errFmt)
 	resp = rr3.Result()
 	actual, err = ioutil.ReadAll(resp.Body)
@@ -103,7 +103,7 @@ func TestHandleServiceUnavailable(t *testing.T) {
 	require.Equal(t, expected, string(actual))
 
 	rr4 := httptest.NewRecorder()
-	errFmt = targets.ResponseFormatUnknown
+	errFmt = ResponseFormatUnknown
 	handleServiceUnavailable(rr4, errFmt)
 	resp = rr4.Result()
 	actual, err = ioutil.ReadAll(resp.Body)
@@ -116,7 +116,7 @@ func TestHandleTooManyRequests(t *testing.T) {
 	to := 10
 
 	rr1 := httptest.NewRecorder()
-	errFmt := targets.ResponseFormatHtml
+	errFmt := ResponseFormatHtml
 	expected := templates.TooManyRequestsPage(to)
 	handleTooManyRequests(rr1, errFmt, time.Duration(to)*time.Second)
 	resp := rr1.Result()
@@ -128,8 +128,8 @@ func TestHandleTooManyRequests(t *testing.T) {
 	expected = fmt.Sprintf("Too many requests - try again in %d seconds\n",
 		to)
 	rr2 := httptest.NewRecorder()
-	errFmt = targets.ResponseFormatJson
-	b, err := json.Marshal(targets.ResponseError{
+	errFmt = ResponseFormatJson
+	b, err := json.Marshal(ResponseError{
 		Code:    http.StatusTooManyRequests,
 		Message: expected[:len(expected)-1],
 	})
@@ -142,7 +142,7 @@ func TestHandleTooManyRequests(t *testing.T) {
 	require.Equal(t, b, actual)
 
 	rr3 := httptest.NewRecorder()
-	errFmt = targets.ResponseFormatPlain
+	errFmt = ResponseFormatPlain
 	handleTooManyRequests(rr3, errFmt, time.Duration(to)*time.Second)
 	resp = rr3.Result()
 	actual, err = ioutil.ReadAll(resp.Body)
@@ -151,7 +151,7 @@ func TestHandleTooManyRequests(t *testing.T) {
 	require.Equal(t, expected, string(actual))
 
 	rr4 := httptest.NewRecorder()
-	errFmt = targets.ResponseFormatUnknown
+	errFmt = ResponseFormatUnknown
 	handleTooManyRequests(rr4, errFmt, time.Duration(to)*time.Second)
 	resp = rr4.Result()
 	actual, err = ioutil.ReadAll(resp.Body)
@@ -323,6 +323,13 @@ func TestServicePoolLoadBalancer(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 	require.Equal(t, errBody, string(respBody))
+}
+
+func TestServiceSetResponseFormat(t *testing.T) {
+	expected := ResponseFormatJson
+	pool := &servicePool{}
+	pool.SetResponseFormat(expected)
+	require.Equal(t, expected, pool.RespFormat)
 }
 
 func TestServicePoolNextIndex(t *testing.T) {

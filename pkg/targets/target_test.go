@@ -49,29 +49,19 @@ func TestIsTLS(t *testing.T) {
 	}
 }
 
-func TestTargetErrResponseFormat(t *testing.T) {
-	expected := ResponseFormatJson
-	tgt := &target{ErrRespFmt: expected}
-	actual := tgt.ErrResponseFormat()
-	require.Equal(t, expected, actual)
-}
-
 func TestTargetGet(t *testing.T) {
 	host := "example.com"
 	port := "8080"
 	proto := "http"
-	respFmt := "json"
 	targetUrl, err := url.Parse(
 		fmt.Sprintf("%s://%s:%s", proto, host, port))
 	require.Nil(t, err)
 	target := NewServiceTarget(targetUrl)
 	require.NotNil(t, target)
-	target.SetErrResponseFormat(ResponseFormatJson)
 	require.Equal(t, "true", target.Get("alive"))
 	require.Equal(t, host, target.Get("host"))
 	require.Equal(t, port, target.Get("port"))
 	require.Equal(t, proto, target.Get("protocol"))
-	require.Equal(t, respFmt, target.Get("response_format"))
 	require.Equal(t, TargetTypeDomain.String(), target.Get("type"))
 }
 
@@ -115,23 +105,13 @@ func TestTargetSetAlive(t *testing.T) {
 	require.False(t, target.IsAlive())
 }
 
-func TestTargetSetErrResponseFormat(t *testing.T) {
-	expected := ResponseFormatJson
-	tgt := &target{}
-	tgt.SetErrResponseFormat(expected)
-	actual := tgt.ErrResponseFormat()
-	require.Equal(t, expected, actual)
-}
-
 func TestTargetSummary(t *testing.T) {
 	host := "example.com"
 	port := 8080
 	proto := "http"
 	expected := fmt.Sprintf(
-		"alive=true,host=%s,port=%d,protocol=%s,response_format=%s,type=%s",
-		host, port, proto,
-		ResponseFormatPlain.String(),
-		TargetTypeDomain.String(),
+		"alive=true,host=%s,port=%d,protocol=%s,type=%s",
+		host, port, proto, TargetTypeDomain.String(),
 	)
 	targetUrl, err := url.Parse(
 		fmt.Sprintf("%s://%s:%d", proto, host, port))

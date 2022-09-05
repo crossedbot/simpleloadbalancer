@@ -59,6 +59,10 @@ type ServicePool interface {
 	// the targeted services using the Round Robin strategy. Further,
 	// requests are rate limited by IP address.
 	LoadBalancer() http.HandlerFunc
+
+	// SetResponseFormat sets the error response formatting for the service
+	// pool.
+	SetResponseFormat(errFmt ResponseFormat)
 }
 
 // servicePool implements a ServicePool to track and balance client requests to
@@ -68,6 +72,7 @@ type servicePool struct {
 	IPRegistry   ratelimit.IPRegistry // IP registry for rate limiting
 	Rate         int64                // Request rate in Nanoseconds
 	RateCapacity int64                // Capacity of requests in a queue
+	RespFormat   ResponseFormat       // Service response format
 	Services     []*service           // List of backend services
 }
 
@@ -76,6 +81,7 @@ func New(rate int64, rateCap int64) ServicePool {
 		IPRegistry:   ratelimit.NewIPRegistry(time.Duration(rate)),
 		Rate:         rate,
 		RateCapacity: rateCap,
+		RespFormat:   DefaultResponseFormat,
 	}
 }
 
@@ -106,8 +112,7 @@ func (pool *servicePool) AddService(target targets.Target) error {
 			alive := pool.RetryService(w, r)
 			svc.Target.SetAlive(alive)
 			if !alive && !pool.AttemptNextService(w, r) {
-				handleServiceUnavailable(w,
-					svc.Target.ErrResponseFormat())
+				handleServiceUnavailable(w, pool.RespFormat)
 			}
 		}
 	pool.Services = append(pool.Services, svc)
@@ -194,19 +199,21 @@ func (pool *servicePool) LoadBalancer() http.HandlerFunc {
 		limiter := pool.GetOrCreateLimiter(ip)
 		next, err := limiter.Next()
 		if err == ratelimit.ErrLimiterMaxCapacity {
-			svc := pool.CurrentService()
-			handleTooManyRequests(w,
-				svc.Target.ErrResponseFormat(), next)
+			handleTooManyRequests(w, pool.RespFormat, next)
 
 			return
 		}
 		// Service the request
 		if !pool.AttemptNextService(w, r) {
-			svc := pool.CurrentService()
-			handleServiceUnavailable(w,
-				svc.Target.ErrResponseFormat())
+			handleServiceUnavailable(w, pool.RespFormat)
 			return
 		}
+	}
+}
+
+func (pool *servicePool) SetResponseFormat(format ResponseFormat) {
+	if format.String() != ResponseFormatUnknown.String() {
+		pool.RespFormat = format
 	}
 }
 
@@ -301,15 +308,15 @@ func getRetriesFromContext(r *http.Request) int {
 
 // handleServiceUnavailable handles the response for when services are
 // unavailable (HTTP code 503).
-func handleServiceUnavailable(w http.ResponseWriter, format targets.ResponseFormat) {
+func handleServiceUnavailable(w http.ResponseWriter, format ResponseFormat) {
 	contentType := ""
 	msg := ""
 	switch format {
-	case targets.ResponseFormatHtml:
+	case ResponseFormatHtml:
 		contentType = "text/html"
 		msg = templates.ServiceUnavailablePage()
-	case targets.ResponseFormatJson:
-		b, err := json.Marshal(targets.ResponseError{
+	case ResponseFormatJson:
+		b, err := json.Marshal(ResponseError{
 			Code:    http.StatusServiceUnavailable,
 			Message: "Service not available",
 		})
@@ -330,15 +337,15 @@ func handleServiceUnavailable(w http.ResponseWriter, format targets.ResponseForm
 
 // handleToomanyRequests handles the response for when the client has exceeded
 // the max capacity of requests in a set amount of time (HTTP code 429).
-func handleTooManyRequests(w http.ResponseWriter, format targets.ResponseFormat, to time.Duration) {
+func handleTooManyRequests(w http.ResponseWriter, format ResponseFormat, to time.Duration) {
 	contentType := ""
 	msg := ""
 	switch format {
-	case targets.ResponseFormatHtml:
+	case ResponseFormatHtml:
 		contentType = "text/html"
 		msg = templates.TooManyRequestsPage(int(to.Seconds()))
-	case targets.ResponseFormatJson:
-		b, err := json.Marshal(targets.ResponseError{
+	case ResponseFormatJson:
+		b, err := json.Marshal(ResponseError{
 			Code: http.StatusTooManyRequests,
 			Message: fmt.Sprintf(
 				"Too many requests - try again in %d seconds",

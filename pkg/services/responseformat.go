@@ -1,4 +1,4 @@
-package targets
+package services
 
 import (
 	"strings"

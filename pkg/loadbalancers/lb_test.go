@@ -9,13 +9,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
+	"github.com/crossedbot/simpleloadbalancer/pkg/services"
 	"github.com/crossedbot/simpleloadbalancer/pkg/templates"
 )
 
 func TestHandleForbidden(t *testing.T) {
 	rr1 := httptest.NewRecorder()
-	errFmt := targets.ResponseFormatHtml
+	errFmt := services.ResponseFormatHtml
 	expected := templates.ForbiddenPage()
 	handleForbidden(rr1, errFmt)
 	resp := rr1.Result()
@@ -26,8 +26,8 @@ func TestHandleForbidden(t *testing.T) {
 
 	expected = "Forbidden\n"
 	rr2 := httptest.NewRecorder()
-	errFmt = targets.ResponseFormatJson
-	b, err := json.Marshal(targets.ResponseError{
+	errFmt = services.ResponseFormatJson
+	b, err := json.Marshal(services.ResponseError{
 		Code:    http.StatusForbidden,
 		Message: expected[:len(expected)-1],
 	})
@@ -40,7 +40,7 @@ func TestHandleForbidden(t *testing.T) {
 	require.Equal(t, b, actual)
 
 	rr3 := httptest.NewRecorder()
-	errFmt = targets.ResponseFormatPlain
+	errFmt = services.ResponseFormatPlain
 	handleForbidden(rr3, errFmt)
 	resp = rr3.Result()
 	actual, err = ioutil.ReadAll(resp.Body)
@@ -49,7 +49,7 @@ func TestHandleForbidden(t *testing.T) {
 	require.Equal(t, expected, string(actual))
 
 	rr4 := httptest.NewRecorder()
-	errFmt = targets.ResponseFormatUnknown
+	errFmt = services.ResponseFormatUnknown
 	handleForbidden(rr4, errFmt)
 	resp = rr4.Result()
 	actual, err = ioutil.ReadAll(resp.Body)

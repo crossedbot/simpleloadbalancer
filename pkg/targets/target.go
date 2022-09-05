@@ -99,9 +99,6 @@ func (tt TargetType) String() string {
 
 // Target represents an interface to a load balancer target.
 type Target interface {
-	// ErrResponseFormat returns the error response format for this target.
-	ErrResponseFormat() ResponseFormat
-
 	// Get returns the value for the given key name of  the target's
 	// attribute. Keys include:
 	//   - alive
@@ -122,9 +119,6 @@ type Target interface {
 	// SetAlive sets the alive attribute of the target.
 	SetAlive(v bool)
 
-	// SetErrResponseFormat sets the error response formatting.
-	SetErrResponseFormat(errFmt ResponseFormat)
-
 	// Summary returns a comma-separated string of key-value pairs of the
 	// target's attributes.
 	Summary() string
@@ -141,7 +135,6 @@ type target struct {
 	Host       string
 	TargetType TargetType
 	Alive      bool
-	ErrRespFmt ResponseFormat
 	Lock       *sync.RWMutex
 }
 
@@ -157,7 +150,6 @@ func NewTarget(host string, port int, protocol string) Target {
 		Host:       host,
 		TargetType: targetType,
 		Alive:      true,
-		ErrRespFmt: DefaultResponseFormat,
 		Lock:       new(sync.RWMutex),
 	}
 }
@@ -176,10 +168,6 @@ func NewServiceTarget(target *url.URL) Target {
 	return NewTarget(host, port, proto)
 }
 
-func (t *target) ErrResponseFormat() ResponseFormat {
-	return t.ErrRespFmt
-}
-
 func (t *target) Get(key string) string {
 	v := ""
 	switch strings.ToLower(key) {
@@ -191,8 +179,6 @@ func (t *target) Get(key string) string {
 		v = strconv.Itoa(t.Port)
 	case "protocol":
 		v = t.Protocol
-	case "response_format":
-		v = t.ErrRespFmt.String()
 	case "type":
 		v = t.TargetType.String()
 	}
@@ -213,16 +199,9 @@ func (t *target) SetAlive(v bool) {
 	t.Lock.Unlock()
 }
 
-func (t *target) SetErrResponseFormat(errFmt ResponseFormat) {
-	if errFmt.String() != ResponseFormatUnknown.String() {
-		t.ErrRespFmt = errFmt
-	}
-}
-
 func (t *target) Summary() string {
 	summary := ""
-	keys := []string{"alive", "host", "port", "protocol", "response_format",
-		"type"}
+	keys := []string{"alive", "host", "port", "protocol", "type"}
 	for i, k := range keys {
 		if v := t.Get(k); v != "" {
 			summary = fmt.Sprintf("%s%s=%s", summary, k, v)

@@ -51,7 +51,7 @@ type Config struct {
 	RequestRateCap      int64           `json:"request_rate_cap" yaml:"request_rate_cap"`
 	HealthCheckInterval int             `json:"health_check_interval" yaml:"health_check_interval"`
 	TargetGroups        []LBTargetGroup `json:"target_groups" yaml:"target_groups"`
-	ErrRespFmt          string          `json:"err_resp_format" yaml:"err_resp_format"` // Override error response format
+	RespFormat          string          `json:"resp_format" yaml:"resp_format"` // Override LB response format
 }
 
 // LoadConfig loads the given JSON file and returns a newly populated Config.
