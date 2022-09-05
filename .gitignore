@@ -14,8 +14,8 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
-config.toml
 TODO
 NOTES.txt
 configs/
 tmp/
+*.qtpl.go

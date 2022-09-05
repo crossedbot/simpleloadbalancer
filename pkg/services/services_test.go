@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/crossedbot/simpleloadbalancer/pkg/ratelimit"
 	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
+	"github.com/crossedbot/simpleloadbalancer/pkg/templates"
 )
 
 func TestGetAttemptsFromContext(t *testing.T) {
@@ -63,6 +65,99 @@ func TestGetRetriesFromContext(t *testing.T) {
 	ctx = context.WithValue(ctx, ServiceContextRetryKey, expected)
 	actual = getRetriesFromContext(r.WithContext(ctx))
 	require.Equal(t, expected, actual)
+}
+
+func TestHandleServiceUnavailable(t *testing.T) {
+	rr1 := httptest.NewRecorder()
+	errFmt := ResponseFormatHtml
+	expected := templates.ServiceUnavailablePage()
+	handleServiceUnavailable(rr1, errFmt)
+	resp := rr1.Result()
+	actual, err := ioutil.ReadAll(resp.Body)
+	require.Nil(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	require.Equal(t, expected, string(actual))
+
+	expected = "Service not available\n"
+	rr2 := httptest.NewRecorder()
+	errFmt = ResponseFormatJson
+	b, err := json.Marshal(ResponseError{
+		Code:    http.StatusServiceUnavailable,
+		Message: expected[:len(expected)-1],
+	})
+	require.Nil(t, err)
+	handleServiceUnavailable(rr2, errFmt)
+	resp = rr2.Result()
+	actual, err = ioutil.ReadAll(resp.Body)
+	require.Nil(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	require.Equal(t, b, actual)
+
+	rr3 := httptest.NewRecorder()
+	errFmt = ResponseFormatPlain
+	handleServiceUnavailable(rr3, errFmt)
+	resp = rr3.Result()
+	actual, err = ioutil.ReadAll(resp.Body)
+	require.Nil(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	require.Equal(t, expected, string(actual))
+
+	rr4 := httptest.NewRecorder()
+	errFmt = ResponseFormatUnknown
+	handleServiceUnavailable(rr4, errFmt)
+	resp = rr4.Result()
+	actual, err = ioutil.ReadAll(resp.Body)
+	require.Nil(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	require.Equal(t, expected, string(actual))
+}
+
+func TestHandleTooManyRequests(t *testing.T) {
+	to := 10
+
+	rr1 := httptest.NewRecorder()
+	errFmt := ResponseFormatHtml
+	expected := templates.TooManyRequestsPage(to)
+	handleTooManyRequests(rr1, errFmt, time.Duration(to)*time.Second)
+	resp := rr1.Result()
+	actual, err := ioutil.ReadAll(resp.Body)
+	require.Nil(t, err)
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	require.Equal(t, expected, string(actual))
+
+	expected = fmt.Sprintf("Too many requests - try again in %d seconds\n",
+		to)
+	rr2 := httptest.NewRecorder()
+	errFmt = ResponseFormatJson
+	b, err := json.Marshal(ResponseError{
+		Code:    http.StatusTooManyRequests,
+		Message: expected[:len(expected)-1],
+	})
+	require.Nil(t, err)
+	handleTooManyRequests(rr2, errFmt, time.Duration(to)*time.Second)
+	resp = rr2.Result()
+	actual, err = ioutil.ReadAll(resp.Body)
+	require.Nil(t, err)
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	require.Equal(t, b, actual)
+
+	rr3 := httptest.NewRecorder()
+	errFmt = ResponseFormatPlain
+	handleTooManyRequests(rr3, errFmt, time.Duration(to)*time.Second)
+	resp = rr3.Result()
+	actual, err = ioutil.ReadAll(resp.Body)
+	require.Nil(t, err)
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	require.Equal(t, expected, string(actual))
+
+	rr4 := httptest.NewRecorder()
+	errFmt = ResponseFormatUnknown
+	handleTooManyRequests(rr4, errFmt, time.Duration(to)*time.Second)
+	resp = rr4.Result()
+	actual, err = ioutil.ReadAll(resp.Body)
+	require.Nil(t, err)
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	require.Equal(t, expected, string(actual))
 }
 
 func TestServicePoolAddService(t *testing.T) {
@@ -228,6 +323,13 @@ func TestServicePoolLoadBalancer(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 	require.Equal(t, errBody, string(respBody))
+}
+
+func TestServiceSetResponseFormat(t *testing.T) {
+	expected := ResponseFormatJson
+	pool := &servicePool{}
+	pool.SetResponseFormat(expected)
+	require.Equal(t, expected, pool.RespFormat)
 }
 
 func TestServicePoolNextIndex(t *testing.T) {

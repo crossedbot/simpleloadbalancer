@@ -111,7 +111,8 @@ func TestTargetSummary(t *testing.T) {
 	proto := "http"
 	expected := fmt.Sprintf(
 		"alive=true,host=%s,port=%d,protocol=%s,type=%s",
-		host, port, proto, TargetTypeDomain.String())
+		host, port, proto, TargetTypeDomain.String(),
+	)
 	targetUrl, err := url.Parse(
 		fmt.Sprintf("%s://%s:%d", proto, host, port))
 	require.Nil(t, err)
