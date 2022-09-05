@@ -105,7 +105,6 @@ type Target interface {
 	//   - host
 	//   - port
 	//   - protocol
-	//   - response_format
 	//   - type
 	Get(key string) string
 
