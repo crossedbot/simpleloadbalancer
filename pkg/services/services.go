@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/crossedbot/simpleloadbalancer/pkg/ratelimit"
 	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
+	"github.com/crossedbot/simpleloadbalancer/pkg/templates"
 )
 
 const (
@@ -104,8 +106,8 @@ func (pool *servicePool) AddService(target targets.Target) error {
 			alive := pool.RetryService(w, r)
 			svc.Target.SetAlive(alive)
 			if !alive && !pool.AttemptNextService(w, r) {
-				http.Error(w, "Service not available",
-					http.StatusServiceUnavailable)
+				handleServiceUnavailable(w,
+					svc.Target.ErrResponseFormat())
 			}
 		}
 	pool.Services = append(pool.Services, svc)
@@ -192,17 +194,17 @@ func (pool *servicePool) LoadBalancer() http.HandlerFunc {
 		limiter := pool.GetOrCreateLimiter(ip)
 		next, err := limiter.Next()
 		if err == ratelimit.ErrLimiterMaxCapacity {
-			msg := fmt.Sprintf(
-				"Too many requests - try again in %d secs",
-				int(next.Seconds()),
-			)
-			http.Error(w, msg, http.StatusTooManyRequests)
+			svc := pool.CurrentService()
+			handleTooManyRequests(w,
+				svc.Target.ErrResponseFormat(), next)
+
 			return
 		}
 		// Service the request
 		if !pool.AttemptNextService(w, r) {
-			http.Error(w, "Service not available",
-				http.StatusServiceUnavailable)
+			svc := pool.CurrentService()
+			handleServiceUnavailable(w,
+				svc.Target.ErrResponseFormat())
 			return
 		}
 	}
@@ -295,6 +297,70 @@ func getRetriesFromContext(r *http.Request) int {
 		return retries
 	}
 	return 0
+}
+
+// handleServiceUnavailable handles the response for when services are
+// unavailable (HTTP code 503).
+func handleServiceUnavailable(w http.ResponseWriter, format targets.ResponseFormat) {
+	contentType := ""
+	msg := ""
+	switch format {
+	case targets.ResponseFormatHtml:
+		contentType = "text/html"
+		msg = templates.ServiceUnavailablePage()
+	case targets.ResponseFormatJson:
+		b, err := json.Marshal(targets.ResponseError{
+			Code:    http.StatusServiceUnavailable,
+			Message: "Service not available",
+		})
+		if err == nil {
+			contentType = "application/json"
+			msg = string(b)
+			break
+		}
+		fallthrough
+	default:
+		contentType = "text/plain"
+		msg = "Service not available\n"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusServiceUnavailable)
+	fmt.Fprintf(w, "%s", msg)
+}
+
+// handleToomanyRequests handles the response for when the client has exceeded
+// the max capacity of requests in a set amount of time (HTTP code 429).
+func handleTooManyRequests(w http.ResponseWriter, format targets.ResponseFormat, to time.Duration) {
+	contentType := ""
+	msg := ""
+	switch format {
+	case targets.ResponseFormatHtml:
+		contentType = "text/html"
+		msg = templates.TooManyRequestsPage(int(to.Seconds()))
+	case targets.ResponseFormatJson:
+		b, err := json.Marshal(targets.ResponseError{
+			Code: http.StatusTooManyRequests,
+			Message: fmt.Sprintf(
+				"Too many requests - try again in %d seconds",
+				int(to.Seconds()),
+			),
+		})
+		if err == nil {
+			contentType = "application/json"
+			msg = string(b)
+			break
+		}
+		fallthrough
+	default:
+		contentType = "text/plain"
+		msg = fmt.Sprintf(
+			"Too many requests - try again in %d seconds\n",
+			int(to.Seconds()),
+		)
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusTooManyRequests)
+	fmt.Fprintf(w, "%s", msg)
 }
 
 // prExTim logs the execution time for a given routine name.

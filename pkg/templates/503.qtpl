@@ -1,0 +1,14 @@
+{% func ServiceUnavailablePage()  %}
+<!DOCTYPE html>
+	<head>
+		<title>Service Unavailable</title>
+	</head>
+	<body>
+		<div class="page">
+			<h1>Error 503</h1>
+			<h3>Service not available</h3>
+			<p>Services are not available to handle this request.</p>
+		</div>
+	</body>
+</html>
+{% endfunc %}

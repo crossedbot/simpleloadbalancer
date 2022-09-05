@@ -1,0 +1,14 @@
+{% func ForbiddenPage()  %}
+<!DOCTYPE html>
+	<head>
+		<title>Forbidden</title>
+	</head>
+	<body>
+		<div class="page">
+			<h1>Error 403</h1>
+			<h3>Forbidden</h3>
+			<p>Access is forbidden for this resource.</p>
+		</div>
+	</body>
+</html>
+{% endfunc %}

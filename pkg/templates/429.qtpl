@@ -1,0 +1,14 @@
+{% func TooManyRequestsPage(t int)  %}
+<!DOCTYPE html>
+	<head>
+		<title>Too Many Requests</title>
+	</head>
+	<body>
+		<div class="page">
+			<h1>Error 429</h1>
+			<h3>Too Many Requests</h3>
+			<p>Too many requests - try again in {%d t %} seconds.</p>
+		</div>
+	</body>
+</html>
+{% endfunc %}

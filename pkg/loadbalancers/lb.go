@@ -2,7 +2,9 @@ package loadbalancers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/crossedbot/simpleloadbalancer/pkg/rules"
 	"github.com/crossedbot/simpleloadbalancer/pkg/services"
 	"github.com/crossedbot/simpleloadbalancer/pkg/targets"
+	"github.com/crossedbot/simpleloadbalancer/pkg/templates"
 )
 
 var (
@@ -43,6 +46,10 @@ type LoadBalancer interface {
 	// routine.
 	Start(laddr, protocol string) (StopFn, error)
 
+	// SetErrResponseFormat sets the error response format for the load
+	// balancer.
+	SetErrResponseFormat(errFmt string)
+
 	// SetTLS enables TLS connections and sets the certificate and private
 	// key to the given filenames.
 	SetTLS(certFile, keyFile string)
@@ -65,20 +72,22 @@ type appTarget struct {
 // balancer and manages an internal service pool. Application means HTTP
 // services.
 type appLoadBalancer struct {
-	Rate        int64       // Request Rate
-	Capacity    int64       // Request capacity
-	Targets     []appTarget // Service targets
-	TlsEnabled  bool        // Indicates TLS is enabled
-	TlsCertFile string      // TLS certificate filename
-	TlsKeyFile  string      // TLS private key filename
+	Rate        int64                  // Request Rate
+	Capacity    int64                  // Request capacity
+	Targets     []appTarget            // Service targets
+	TlsEnabled  bool                   // Indicates TLS is enabled
+	TlsCertFile string                 // TLS certificate filename
+	TlsKeyFile  string                 // TLS private key filename
+	ErrRespFmt  targets.ResponseFormat // Error response format
 }
 
 // NewApplicationLoadBalancer returns a new Load Balancer for targeted HTTP
 // services.
 func NewApplicationLoadBalancer(reqRate time.Duration, reqCap int64) LoadBalancer {
 	return &appLoadBalancer{
-		Rate:     int64(reqRate),
-		Capacity: int64(reqCap),
+		Rate:       int64(reqRate),
+		Capacity:   int64(reqCap),
+		ErrRespFmt: targets.DefaultResponseFormat,
 	}
 }
 
@@ -96,6 +105,7 @@ func (alb *appLoadBalancer) AddTargetGroup(group *targets.TargetGroup) error {
 	}
 	pool := services.New(alb.Rate, alb.Capacity)
 	for _, t := range group.Targets {
+		t.SetErrResponseFormat(alb.ErrRespFmt)
 		if err := pool.AddService(t); err != nil {
 			return err
 		}
@@ -149,6 +159,7 @@ func (alb *appLoadBalancer) Redirect(w http.ResponseWriter, r *http.Request, url
 
 func (alb *appLoadBalancer) Start(laddr, protocol string) (StopFn, error) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
+		matchFound := false
 		for _, t := range alb.Targets {
 			if t.Rule.Matches(r) {
 				switch t.Rule.Action {
@@ -156,11 +167,18 @@ func (alb *appLoadBalancer) Start(laddr, protocol string) (StopFn, error) {
 					if t.Pool != nil {
 						t.Pool.LoadBalancer()(w, r)
 					}
+					matchFound = true
 				case rules.RuleActionRedirect:
 					alb.Redirect(w, r, t.RedirectUrl)
+					matchFound = true
 				}
-				break
+				if matchFound {
+					break
+				}
 			}
+		}
+		if !matchFound {
+			handleForbidden(w, alb.ErrRespFmt)
 		}
 	}
 	server := http.Server{
@@ -182,6 +200,13 @@ func (alb *appLoadBalancer) Start(laddr, protocol string) (StopFn, error) {
 	return func() { server.Shutdown(context.Background()) }, nil
 }
 
+func (alb *appLoadBalancer) SetErrResponseFormat(errFmt string) {
+	f := targets.ToResponseFormat(errFmt)
+	if f != targets.ResponseFormatUnknown {
+		alb.ErrRespFmt = f
+	}
+}
+
 func (alb *appLoadBalancer) SetTLS(certFile, keyFile string) {
 	alb.TlsEnabled = true
 	alb.TlsCertFile = certFile
@@ -192,24 +217,58 @@ func (alb *appLoadBalancer) Type() string {
 	return LoadBalancerTypeApp.Long()
 }
 
+// handleForbidden handles requests are forbidden from accessing a resource
+// (HTTP code 403). In context, this is likely done when an LoadBalancer is
+// unable to match any target rules.
+func handleForbidden(w http.ResponseWriter, format targets.ResponseFormat) {
+	contentType := ""
+	msg := ""
+	switch format {
+	case targets.ResponseFormatHtml:
+		contentType = "text/html"
+		msg = templates.ForbiddenPage()
+	case targets.ResponseFormatJson:
+		b, err := json.Marshal(targets.ResponseError{
+			Code:    http.StatusForbidden,
+			Message: "Forbidden",
+		})
+		if err == nil {
+			contentType = "application/json"
+			msg = string(b)
+			break
+		}
+		fallthrough
+	default:
+		contentType = "text/plain"
+		msg = "Forbidden\n"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusForbidden)
+	fmt.Fprintf(w, "%s", msg)
+}
+
 // netLoadBalancer implements the LoadBalancer interface as a network (E.g. TCP,
 // UDP, etc.) load balancer and manages its own network pool.
 type netLoadBalancer struct {
-	Pool    networks.NetworkPool
-	Timeout time.Duration
+	Pool       networks.NetworkPool
+	Timeout    time.Duration
+	ErrRespFmt targets.ResponseFormat
 }
 
 // NewNetworkLoadBalancer returns a LoadBalancer for network-level targets. This
 // means services that expect TCP, UDP, whatever connections.
 func NewNetworkLoadBalancer(to time.Duration) LoadBalancer {
 	return &netLoadBalancer{
-		Pool:    networks.New(),
-		Timeout: to,
+		Pool:       networks.New(),
+		Timeout:    to,
+		ErrRespFmt: targets.DefaultResponseFormat,
 	}
 }
 
 func (nlb *netLoadBalancer) AddTargetGroup(group *targets.TargetGroup) error {
 	for _, t := range group.Targets {
+		t.SetErrResponseFormat(nlb.ErrRespFmt)
 		if err := nlb.Pool.AddTarget(t, nlb.Timeout); err != nil {
 			return err
 		}
@@ -228,6 +287,13 @@ func (nlb *netLoadBalancer) GC() StopFn {
 func (nlb *netLoadBalancer) Start(laddr, protocol string) (StopFn, error) {
 	stopFn, err := nlb.Pool.LoadBalancer(laddr, protocol)
 	return StopFn(stopFn), err
+}
+
+func (nlb *netLoadBalancer) SetErrResponseFormat(errFmt string) {
+	f := targets.ToResponseFormat(errFmt)
+	if f != targets.ResponseFormatUnknown {
+		nlb.ErrRespFmt = f
+	}
 }
 
 func (nlb *netLoadBalancer) SetTLS(certFile, keyFile string) {

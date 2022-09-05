@@ -30,6 +30,33 @@ func fatal(format string, a ...interface{}) {
 	os.Exit(FATAL_EXITCODE)
 }
 
+// addTargetGroups adds the configured target groups to the given load balancer.
+func addTargetGroups(lb loadbalancers.LoadBalancer, targetGroups []LBTargetGroup) error {
+	for _, targetGroup := range targetGroups {
+		rule := rules.Rule{
+			Action:     rules.NewRuleAction(targetGroup.Rule.Action),
+			Conditions: targetGroup.Rule.Conditions,
+		}
+		tg := targets.NewTargetGroup(targetGroup.Name,
+			targetGroup.Protocol, rule)
+		for _, target := range targetGroup.Targets {
+			if target.Url != "" {
+				v, err := url.Parse(target.Url)
+				if err != nil {
+					return err
+				}
+				tg.AddServiceTarget(v)
+			} else {
+				tg.AddTarget(target.Host, target.Port)
+			}
+		}
+		if err := lb.AddTargetGroup(tg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // newLb returns a new LoadBalancer using the given configuration.
 func newLb(c Config) (loadbalancers.LoadBalancer, error) {
 	var lb loadbalancers.LoadBalancer
@@ -48,29 +75,11 @@ func newLb(c Config) (loadbalancers.LoadBalancer, error) {
 	if c.TlsEnabled {
 		lb.SetTLS(c.TlsCertFile, c.TlsKeyFile)
 	}
-	for _, targetGroup := range c.TargetGroups {
-		rule := rules.Rule{
-			Action:     rules.NewRuleAction(targetGroup.Rule.Action),
-			Conditions: targetGroup.Rule.Conditions,
-		}
-		tg := targets.NewTargetGroup(targetGroup.Name,
-			targetGroup.Protocol, rule)
-		for _, target := range targetGroup.Targets {
-			if target.Url != "" {
-				v, err := url.Parse(target.Url)
-				if err != nil {
-					return nil, err
-				}
-				tg.AddServiceTarget(v)
-			} else {
-				tg.AddTarget(target.Host, target.Port)
-			}
-		}
-		if err := lb.AddTargetGroup(tg); err != nil {
-			return nil, err
-		}
+	if c.ErrRespFmt != "" {
+		lb.SetErrResponseFormat(c.ErrRespFmt)
 	}
-	return lb, nil
+	err := addTargetGroups(lb, c.TargetGroups)
+	return lb, err
 }
 
 // run is the main routine that runs the loadbalancer using its given
@@ -91,7 +100,6 @@ func run(ctx context.Context) error {
 	stopHealthCheck := lb.HealthCheck(
 		time.Duration(c.HealthCheckInterval) * time.Second)
 	defer stopHealthCheck()
-
 	laddr := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 	stopLb, err := lb.Start(laddr, c.Protocol)
 	if err != nil {

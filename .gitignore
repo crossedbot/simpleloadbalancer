@@ -19,3 +19,4 @@ TODO
 NOTES.txt
 configs/
 tmp/
+*.qtpl.go
